@@ -41,10 +41,6 @@ export function setResolver(address) {
   RESOLVER = address ?? null
 }
 
-export function getResolver() {
-  return RESOLVER
-}
-
 const FILE = storagePath('names.json')
 const LABEL = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/
 

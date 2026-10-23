@@ -91,15 +91,6 @@ export class Gateway {
     return this.#post('/api/invites', await this.#auth(signer))
   }
 
-  /** A wallet's name, whichever key it currently publishes. */
-  async nameByAddress(address) {
-    try {
-      return await this.#json(`/api/name/by-address/${address}`)
-    } catch {
-      return null
-    }
-  }
-
   nameAvailable(label) {
     return this.#json(`/api/name/available/${encodeURIComponent(label)}`)
   }

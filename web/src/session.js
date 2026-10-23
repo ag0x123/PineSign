@@ -4,9 +4,13 @@
  * Signed out it reads "Get started"; signed in it shows the name the key
  * answers to, or the key's address until a name is claimed. One element, two
  * states, so the nav never lies about whether you have an account.
+ *
+ * "Signed in" means the sign-in window is open, because that window is where
+ * the key is. Close it and you are signed out — there is no stored session to
+ * outlive it.
  */
 
-import { signedIn, current } from '../../shared/keysource.js'
+import { signedIn, current, signOut } from '../../shared/keysource.js'
 import { Gateway } from '../../shared/client.js'
 
 const gateway = new Gateway(location.origin)
@@ -46,6 +50,14 @@ export async function renderAccountChip(onGetStarted) {
       <span class="addr">${label}</span>
       <div class="account-menu">
         <div class="full">${identity.address}</div>
+        <button class="signout">Sign out</button>
       </div>
     </div>`
+
+  // Signing out closes the sign-in window, which is where the key was. There
+  // is nothing else to clear, because nothing else ever held it.
+  slot.querySelector('.signout').addEventListener('click', () => {
+    signOut()
+    location.reload()
+  })
 }

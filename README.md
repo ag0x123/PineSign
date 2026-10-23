@@ -7,7 +7,11 @@ Verifiable file transfer: if someone opens a file you sent, you get proof on Eth
 ## Now (main, in progress)
 - Sign-in: email code + passkey. No vendor wallet, no extension.
 - Key: derived in the browser from the passkey (WebAuthn PRF → HKDF → secp256k1). Never stored, never sent.
-- Sign-in page: static, on Swarm, served at v1.pinesign.xyz by an allow-listed gateway.
+- Sign-in page: static, on Swarm, served at `v1.id.pinesign.xyz` from an allow-list. Its own
+  origin on purpose: a passkey scoped to `id.` cannot be asserted by the apex, so the lander
+  cannot reach the key.
+- All crypto — encrypt, decrypt, sign, receipt — runs in that page. The app passes bytes in
+  and gets results out.
 - Gateway: self-hostable, swappable. Uploads ciphertext to Swarm, sends emails, writes receipts to ENS.
 - Proof: unchanged — recipient must decrypt to claim; receipt frozen on chain.
 
@@ -19,6 +23,17 @@ Verifiable file transfer: if someone opens a file you sent, you get proof on Eth
 
 ## Still trusted
 Our gateway, DNS, registrar, VPS, and the allow-list owner.
+
+## Run it
+```bash
+cp .env.example .env     # every deployment value lives here
+npm install
+npm test                 # gateway and sign-in flow
+npm run test:contracts   # resolver and receipts
+npm run build && npm run gateway
+```
+Deploying: [docs/SETUP.md](docs/SETUP.md). The passkey checks no suite can do:
+[docs/TESTING.md](docs/TESTING.md).
 
 ## Verify a transfer yourself
 
