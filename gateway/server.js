@@ -16,10 +16,14 @@ import * as names from './names.js'
 import * as setup from './setup.js'
 import * as chain from './chain.js'
 import * as admin from './admin.js'
-import { rateLimit, requireHexParam } from './limits.js'
+import { rateLimit, requireHexParam, isHex } from './limits.js'
 import * as invites from './invites.js'
 import * as mail from './mail.js'
 import * as ens from './ens.js'
+import * as otp from './otp.js'
+import * as passkey from './passkey.js'
+import * as users from './users.js'
+import { emailHash, normaliseEmail } from './secrets.js'
 import { keccak256, toHex as viemHex } from 'viem'
 import { issueNonce, requireSignature } from './auth.js'
 import { transferDigest, verify, fromHex, toHex, addressFromPublicKey } from '../shared/crypto.js'
@@ -78,6 +82,7 @@ app.use((req, res, next) => {
 const limitAuth = rateLimit({ key: 'auth', windowMs: 60_000, max: 20 })
 const limitSend = rateLimit({ key: 'send', windowMs: 60_000, max: 10 })
 const limitSetup = rateLimit({ key: 'setup', windowMs: 60_000, max: 60 })
+const limitCode = rateLimit({ key: 'code', windowMs: 60_000, max: 10 })
 
 // ---- admin sign-in ----
 
@@ -211,6 +216,96 @@ app.get('/api/health', async (_req, res) => {
     receiptsAddress: state.receiptsAddress,
     swarm: await swarm.stampInfo().catch((e) => ({ error: e.message })),
   })
+})
+
+// ---- sign-in: an email code, then a passkey ----
+
+/**
+ * Step one. A six-digit code to the address, and a session id to carry.
+ *
+ * The response says nothing about whether the address is already known. A
+ * sign-in page that could be used to ask "does this person have an account"
+ * is a different product from the one we are building.
+ */
+app.post('/api/signin/code', limitCode, async (req, res) => {
+  try {
+    const { sessionId, code, expiresInMs } = otp.issue(req.body?.email, req.ip)
+    await mail.signInCode({
+      to: normaliseEmail(req.body.email),
+      code,
+      minutes: Math.round(expiresInMs / 60_000),
+    })
+    res.json({ sessionId, expiresInMs })
+  } catch (err) {
+    if (err.status === 429) res.set('Retry-After', String(err.retryAfter))
+    res.status(err.status ?? 400).json({ error: err.message })
+  }
+})
+
+/**
+ * Step two. A good code earns the passkey challenge — and `known` tells the
+ * page whether to create a passkey or ask for the one already there.
+ */
+app.post('/api/signin/verify', limitAuth, async (req, res) => {
+  try {
+    const { sessionId, code } = req.body ?? {}
+    const result = otp.verify(sessionId, code)
+    if (!result.ok) return res.status(401).json({ error: result.error })
+
+    if (!passkey.configured) {
+      return res.status(503).json({ error: 'this server has no passkey configuration yet' })
+    }
+
+    const known = Boolean(await users.byEmailHash(await emailHash(result.email)))
+    res.json({
+      known,
+      email: result.email,
+      rpId: passkey.RP_ID,
+      rpName: passkey.RP_NAME,
+      challenge: await passkey.challengeFor(result.email, sessionId),
+      // The browser derives its key with this, and we never see the result.
+      prfSalt: 'pinesign/v1',
+    })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+/**
+ * Step three. The page has derived its key and says so.
+ *
+ * What is checked is the ceremony, not the key: that the challenge signed was
+ * the one this session was issued, and that the page driving it was one of the
+ * published sign-in pages. The key itself arrives as a public key, because the
+ * private half never leaves the page that derived it.
+ */
+app.post('/api/signin/finish', limitAuth, async (req, res) => {
+  try {
+    const { sessionId, pubKey, clientDataJSON, created } = req.body ?? {}
+    const email = otp.verifiedEmail(sessionId)
+    if (!email) return res.status(401).json({ error: 'that sign-in has expired — start again' })
+    if (!isHex(pubKey, 66)) return res.status(400).json({ error: 'pubKey must be a 33-byte compressed key' })
+
+    const ceremony = await passkey.checkCeremony({
+      email,
+      sessionId,
+      clientDataJSON,
+      expectedType: created ? 'webauthn.create' : 'webauthn.get',
+    })
+    if (!ceremony.ok) return res.status(401).json({ error: ceremony.error })
+
+    const user = await users.bind({
+      emailHash: await emailHash(email),
+      pubKey,
+      address: addressFromPublicKey(pubKey),
+    })
+    otp.close(sessionId)
+
+    const named = await names.reverse(pubKey)
+    res.json({ pubKey: user.pubKey, address: user.address, name: named?.name ?? null })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
 })
 
 app.post('/api/nonce', limitAuth, (req, res) => {

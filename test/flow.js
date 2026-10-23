@@ -8,8 +8,11 @@ import {
   hashPlaintext, transferDigest, sign, toHex, fromHex,
 } from '../shared/crypto.js'
 import { sha256 } from '@noble/hashes/sha256'
+import { readFile } from 'node:fs/promises'
 
 const BASE = process.env.BASE ?? 'http://localhost:8799'
+const SERVER_LOG = process.env.SERVER_LOG ?? '.storage-test/server.log'
+const SIGNIN_ORIGIN = process.env.SIGNIN_ORIGIN ?? 'https://v1.id.test.local'
 let pass = 0, fail = 0
 
 function check(label, condition) {
@@ -38,6 +41,100 @@ const evePriv = generatePrivateKey(), evePub = toHex(publicKeyFrom(evePriv))
 
 const plaintext = new TextEncoder().encode('The quiet part, written down. ' + Date.now())
 const plaintextHash = toHex(hashPlaintext(plaintext))
+
+/**
+ * The emailed code, read back from the server's own log.
+ *
+ * With no Resend key the gateway prints the message it would have sent, which
+ * is exactly what a developer sees locally. Nothing is stubbed to get it.
+ */
+async function codeFromLog() {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const log = await readFile(SERVER_LOG, 'utf8').catch(() => '')
+    const codes = [...log.matchAll(/Your sign-in code is (\d{6})/g)]
+    if (codes.length) return codes.at(-1)[1]
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error('no sign-in code reached the log')
+}
+
+/**
+ * The one thing stood in for: the authenticator tap. Everything the browser
+ * would send after it — the challenge it signed over and the origin it was on
+ * — is built here exactly as the real ceremony builds it.
+ */
+function clientData({ type, challenge, origin = SIGNIN_ORIGIN }) {
+  return Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false })).toString('base64')
+}
+
+console.log('\nsign-in')
+const signInEmail = `alice+${Date.now()}@example.com`
+const codeReq = await post('/api/signin/code', { email: signInEmail })
+check('a code is issued for an address', codeReq.status === 200 && typeof codeReq.body.sessionId === 'string')
+check('the response carries a session and nothing else', Object.keys(codeReq.body).sort().join() === 'expiresInMs,sessionId')
+
+const badEmail = await post('/api/signin/code', { email: 'not-an-address' })
+check('a malformed address is refused', badEmail.status === 400)
+
+const sessionId = codeReq.body.sessionId
+const code = await codeFromLog()
+
+const wrongCode = await post('/api/signin/verify', { sessionId, code: '000000' === code ? '111111' : '000000' })
+check('a wrong code is refused', wrongCode.status === 401)
+
+const verified = await post('/api/signin/verify', { sessionId, code })
+check('the right code earns a challenge', verified.status === 200 && typeof verified.body.challenge === 'string')
+check('the challenge carries the session id', Buffer.from(verified.body.challenge, 'base64url').subarray(32).toString() === sessionId)
+check('the page is told which salt to derive with', verified.body.prfSalt === 'pinesign/v1')
+check('a first-time address is not known', verified.body.known === false)
+
+const reused = await post('/api/signin/verify', { sessionId, code })
+check('a code cannot be used twice', reused.status === 401)
+
+const wrongOrigin = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  clientDataJSON: clientData({ type: 'webauthn.create', challenge: verified.body.challenge, origin: 'https://evil.example' }),
+})
+check('a ceremony from another origin is refused', wrongOrigin.status === 401)
+
+const wrongChallenge = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  clientDataJSON: clientData({ type: 'webauthn.create', challenge: Buffer.from('nope'.repeat(11)).toString('base64url') }),
+})
+check('a challenge this session was not issued is refused', wrongChallenge.status === 401)
+
+const finished = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  clientDataJSON: clientData({ type: 'webauthn.create', challenge: verified.body.challenge }),
+})
+check('the key is bound to the address', finished.status === 200 && finished.body.pubKey === alicePub)
+check('no name yet', finished.body.name === null)
+
+const spent = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  clientDataJSON: clientData({ type: 'webauthn.create', challenge: verified.body.challenge }),
+})
+check('a finished session cannot be finished again', spent.status === 401)
+
+// Signing in again with a different key would orphan everything already
+// encrypted to the first one, so it is refused rather than silently allowed.
+const second = await post('/api/signin/code', { email: signInEmail })
+const secondVerified = await post('/api/signin/verify', { sessionId: second.body.sessionId, code: await codeFromLog() })
+check('a returning address is known', secondVerified.body.known === true)
+const otherKey = await post('/api/signin/finish', {
+  sessionId: second.body.sessionId,
+  pubKey: evePub,
+  clientDataJSON: clientData({ type: 'webauthn.get', challenge: secondVerified.body.challenge }),
+})
+check('a second, different key for one address is refused', otherKey.status === 400)
 
 console.log('\nnames')
 const aliceName = await post('/api/name/register', { ...(await auth(alicePriv, alicePub)), label: 'alice' + Date.now() % 100000 })

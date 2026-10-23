@@ -35,7 +35,22 @@ function toHtml(text) {
   return `<pre style="font:14px/1.6 -apple-system,Segoe UI,sans-serif;white-space:pre-wrap">${linked}</pre>`
 }
 
-// ---- the four messages ----
+// ---- the messages ----
+
+export function signInCode({ to, code, minutes }) {
+  return send({
+    to,
+    subject: `${code} is your PineSign code`,
+    text: [
+      `Your sign-in code is ${code}.`,
+      '',
+      `It is good for ${minutes} minutes and can be used once.`,
+      '',
+      'If you did not ask to sign in, you can ignore this — nothing happens',
+      'without the code, and nobody else has it.',
+    ].join('\n'),
+  })
+}
 
 export function invitation({ to, fromName, link }) {
   return send({
