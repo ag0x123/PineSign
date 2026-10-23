@@ -115,7 +115,12 @@ el('passkey-go').addEventListener('click', async () => {
     const registered = await api('/api/signin/finish', {
       sessionId: session.id,
       pubKey: ceremony.publicKeyHex,
+      // The gateway verifies this signature against the credential's public
+      // key, so none of it is taken on trust.
       clientDataJSON: ceremony.clientDataJSON,
+      authenticatorData: ceremony.authenticatorData,
+      signature: ceremony.signature,
+      credentialPublicKey: ceremony.credentialPublicKey,
       created: ceremony.created,
     })
 

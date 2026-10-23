@@ -12,6 +12,7 @@ import { readFile } from 'node:fs/promises'
 import http from 'node:http'
 import { keyFromPrfOutput, PRF_SALT } from '../shared/prf.js'
 import * as pages from '../gateway/pages.js'
+import { authenticator } from './authenticator.js'
 
 const BASE = process.env.BASE ?? 'http://localhost:8799'
 const SERVER_LOG = process.env.SERVER_LOG ?? '.storage-test/server.log'
@@ -64,14 +65,9 @@ async function codeFromLog() {
   throw new Error('no sign-in code reached the log')
 }
 
-/**
- * The one thing stood in for: the authenticator tap. Everything the browser
- * would send after it — the challenge it signed over and the origin it was on
- * — is built here exactly as the real ceremony builds it.
- */
-function clientData({ type, challenge, origin = SIGNIN_ORIGIN }) {
-  return Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false })).toString('base64')
-}
+// The only thing stood in for is the tap itself. See test/authenticator.js.
+const RP_ID = process.env.PASSKEY_RP_ID ?? 'id.test.local'
+const alicePasskey = authenticator({ rpId: RP_ID, origin: SIGNIN_ORIGIN })
 
 /**
  * Host-based routing has to be driven with a real Host header, which fetch is
@@ -169,7 +165,7 @@ const wrongOrigin = await post('/api/signin/finish', {
   sessionId,
   pubKey: alicePub,
   created: true,
-  clientDataJSON: clientData({ type: 'webauthn.create', challenge: verified.body.challenge, origin: 'https://evil.example' }),
+  ...alicePasskey.assert({ challenge: verified.body.challenge, as: 'https://evil.example' }),
 })
 check('a ceremony from another origin is refused', wrongOrigin.status === 401)
 
@@ -177,38 +173,103 @@ const wrongChallenge = await post('/api/signin/finish', {
   sessionId,
   pubKey: alicePub,
   created: true,
-  clientDataJSON: clientData({ type: 'webauthn.create', challenge: Buffer.from('nope'.repeat(11)).toString('base64url') }),
+  ...alicePasskey.assert({ challenge: Buffer.from('nope'.repeat(11)).toString('base64url') }),
 })
 check('a challenge this session was not issued is refused', wrongChallenge.status === 401)
+
+// The check that was missing before this existed: clientDataJSON comes from
+// the browser, so saying the right things inside it must not be enough.
+const tampered = Buffer.from(JSON.stringify({
+  type: 'webauthn.get', challenge: verified.body.challenge, origin: SIGNIN_ORIGIN, crossOrigin: false, extra: 'x',
+})).toString('base64url')
+const forgedCeremony = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  ...alicePasskey.assert({ challenge: verified.body.challenge }),
+  clientDataJSON: tampered,
+})
+check('a forged clientDataJSON is refused', forgedCeremony.status === 401)
+
+const strangerPasskey = authenticator({ rpId: RP_ID, origin: SIGNIN_ORIGIN })
+const wrongKey = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  ...strangerPasskey.assert({ challenge: verified.body.challenge }),
+  credentialPublicKey: alicePasskey.credentialPublicKey,
+})
+check('a signature from another credential is refused', wrongKey.status === 401)
+
+const noUv = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  ...alicePasskey.assert({ challenge: verified.body.challenge, ad: alicePasskey.authData({ flags: 0x01 }) }),
+})
+check('an authenticator that did not verify the user is refused', noUv.status === 401)
+
+const wrongRp = await post('/api/signin/finish', {
+  sessionId,
+  pubKey: alicePub,
+  created: true,
+  ...alicePasskey.assert({ challenge: verified.body.challenge, ad: alicePasskey.authData({ rp: 'id.evil.example' }) }),
+})
+check('an assertion for another relying party is refused', wrongRp.status === 401)
 
 const finished = await post('/api/signin/finish', {
   sessionId,
   pubKey: alicePub,
   created: true,
-  clientDataJSON: clientData({ type: 'webauthn.create', challenge: verified.body.challenge }),
+  ...alicePasskey.assert({ challenge: verified.body.challenge }),
 })
 check('the key is bound to the address', finished.status === 200 && finished.body.pubKey === alicePub)
 check('no name yet', finished.body.name === null)
+check('the credential is recorded for on-chain use', /^0x[0-9a-f]{64}$/.test(finished.body.credential?.x ?? ''))
+check('and this counts as a registration', finished.body.registered === true)
 
 const spent = await post('/api/signin/finish', {
   sessionId,
   pubKey: alicePub,
   created: true,
-  clientDataJSON: clientData({ type: 'webauthn.create', challenge: verified.body.challenge }),
+  ...alicePasskey.assert({ challenge: verified.body.challenge }),
 })
 check('a finished session cannot be finished again', spent.status === 401)
 
-// Signing in again with a different key would orphan everything already
-// encrypted to the first one, so it is refused rather than silently allowed.
+// Signing in again with a different derived key would orphan everything
+// already encrypted to the first one, so it is refused.
 const second = await post('/api/signin/code', { email: signInEmail })
 const secondVerified = await post('/api/signin/verify', { sessionId: second.body.sessionId, code: await codeFromLog() })
 check('a returning address is known', secondVerified.body.known === true)
 const otherKey = await post('/api/signin/finish', {
   sessionId: second.body.sessionId,
   pubKey: evePub,
-  clientDataJSON: clientData({ type: 'webauthn.get', challenge: secondVerified.body.challenge }),
+  ...alicePasskey.assert({ challenge: secondVerified.body.challenge }),
 })
+
 check('a second, different key for one address is refused', otherKey.status === 400)
+
+// Another passkey cannot sign in as a known address: the credential on file is
+// the one the delivery contract will verify against, so it is fixed too.
+const third = await post('/api/signin/code', { email: signInEmail })
+const thirdVerified = await post('/api/signin/verify', { sessionId: third.body.sessionId, code: await codeFromLog() })
+const wrongCredential = await post('/api/signin/finish', {
+  sessionId: third.body.sessionId,
+  pubKey: alicePub,
+  ...strangerPasskey.assert({ challenge: thirdVerified.body.challenge }),
+})
+check('another passkey cannot sign in as a known address', wrongCredential.status === 401)
+
+// And the registered one still works, which is the half that is easy to break.
+const fourth = await post('/api/signin/code', { email: signInEmail })
+const fourthVerified = await post('/api/signin/verify', { sessionId: fourth.body.sessionId, code: await codeFromLog() })
+const returning = await post('/api/signin/finish', {
+  sessionId: fourth.body.sessionId,
+  pubKey: alicePub,
+  ...alicePasskey.assert({ challenge: fourthVerified.body.challenge }),
+})
+check('the registered passkey signs in again', returning.status === 200 && returning.body.pubKey === alicePub)
+check('and is not a fresh registration', returning.body.registered === false)
 
 console.log('\nnames')
 const aliceName = await post('/api/name/register', { ...(await auth(alicePriv, alicePub)), label: 'alice' + Date.now() % 100000 })
@@ -259,13 +320,14 @@ const carolInvite = await post('/api/recipient', {
 })
 
 const carolPriv = generatePrivateKey(), carolPub = toHex(publicKeyFrom(carolPriv))
+const carolPasskey = authenticator({ rpId: RP_ID, origin: SIGNIN_ORIGIN })
 const carolCode = await post('/api/signin/code', { email: carolEmail })
 const carolVerified = await post('/api/signin/verify', { sessionId: carolCode.body.sessionId, code: await codeFromLog() })
 await post('/api/signin/finish', {
   sessionId: carolCode.body.sessionId,
   pubKey: carolPub,
   created: true,
-  clientDataJSON: clientData({ type: 'webauthn.create', challenge: carolVerified.body.challenge }),
+  ...carolPasskey.assert({ challenge: carolVerified.body.challenge }),
 })
 const carolName = await post('/api/name/register', {
   ...(await auth(carolPriv, carolPub)),

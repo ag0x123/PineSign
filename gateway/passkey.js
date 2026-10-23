@@ -13,13 +13,17 @@
  * means it cannot be moved to another sign-in either, including a later one by
  * the same person.
  *
- * On the way back, `clientDataJSON` carries the challenge the authenticator
- * actually signed over, and the origin the browser was on. Checking both is
- * what makes the binding worth having: a ceremony driven from some other page
- * does not match, and neither does one driven for some other address.
+ * On the way back, the authenticator's signature over `clientDataJSON` and
+ * `authenticatorData` is verified against the credential's own public key —
+ * recorded at sign-up, and the same key the delivery contract verifies on
+ * chain. Reading the challenge and origin out of `clientDataJSON` without
+ * checking that signature would be worth nothing: the browser writes that blob.
  */
 
 import { emailTag } from './secrets.js'
+import { verifyAssertion, credentialKey } from './webauthn.js'
+
+export { credentialKey }
 
 /**
  * The relying party the passkey belongs to.
@@ -58,31 +62,26 @@ export async function challengeFor(email, sessionId) {
  * Check what came back. Returns `{ ok }` or `{ ok: false, error }` — the error
  * is for the operator's log as much as the user, so it says which check failed.
  */
-export async function checkCeremony({ email, sessionId, clientDataJSON, expectedType }) {
+export async function checkCeremony({
+  email, sessionId, clientDataJSON, authenticatorData, signature,
+  credentialPublicKey, expectedType, previousSignCount = 0,
+}) {
   if (!configured) {
     return { ok: false, error: 'this server has no passkey configuration (PASSKEY_RP_ID, SIGNIN_ORIGINS)' }
   }
-
-  let clientData
-  try {
-    clientData = JSON.parse(Buffer.from(String(clientDataJSON ?? ''), 'base64').toString('utf8'))
-  } catch {
-    return { ok: false, error: 'clientDataJSON is not valid base64 JSON' }
+  if (!credentialPublicKey) {
+    return { ok: false, error: 'no credential public key — the page must send the one it registered' }
   }
 
-  if (clientData.type !== expectedType) {
-    return { ok: false, error: `expected a ${expectedType} ceremony, got ${clientData.type}` }
-  }
-
-  const expected = await challengeFor(email, sessionId)
-  if (clientData.challenge !== expected) {
-    return { ok: false, error: 'the signed challenge is not the one this session was issued' }
-  }
-
-  const origin = String(clientData.origin ?? '').replace(/\/$/, '')
-  if (!ORIGINS.includes(origin)) {
-    return { ok: false, error: `${origin || 'that origin'} is not an allowed sign-in page` }
-  }
-
-  return { ok: true }
+  return verifyAssertion({
+    credentialPublicKey,
+    clientDataJSON,
+    authenticatorData,
+    signature,
+    expectedChallenge: await challengeFor(email, sessionId),
+    expectedOrigins: ORIGINS,
+    expectedRpId: RP_ID,
+    expectedType,
+    previousSignCount,
+  })
 }

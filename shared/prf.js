@@ -119,11 +119,22 @@ export async function createAndDerive({ challenge, rpId, rpName, email, userHand
   })
   if (!created) throw new Error('no passkey was created')
 
-  // The created credential carries the clientDataJSON the gateway checks; the
-  // assertion that follows is only how the PRF output is obtained.
-  const clientDataJSON = bytesToBase64url(new Uint8Array(created.response.clientDataJSON))
-  const identity = await derive({ challenge, rpId, credentialId: created.rawId })
-  return { ...identity, clientDataJSON, created: true }
+  /**
+   * The credential's own public key, which the gateway records and the
+   * delivery contract later verifies on chain.
+   *
+   * It is taken from the assertion that follows rather than trusted from here:
+   * what the gateway checks is a signature, and the only key that can produce
+   * one is this credential's. So registering the wrong key would simply fail
+   * verification rather than register anything.
+   */
+  const credentialPublicKey = bytesToBase64url(new Uint8Array(created.response.getPublicKey()))
+
+  // Assert immediately. Two reasons: an authenticator is allowed to return no
+  // PRF result on creation, and the assertion is what carries a signature the
+  // gateway can verify against the key being registered.
+  const asserted = await derive({ challenge, rpId, credentialId: created.rawId })
+  return { ...asserted, credentialPublicKey, created: true }
 }
 
 /** Assert an existing passkey and derive the key from its PRF output. */
@@ -144,7 +155,12 @@ export async function derive({ challenge, rpId, credentialId = null }) {
   const identity = hydrate(keyFromPrfOutput(prfResult(assertion)))
   return {
     ...identity,
+    // Everything the gateway needs to verify the ceremony rather than take
+    // the page's word for it.
     clientDataJSON: bytesToBase64url(new Uint8Array(assertion.response.clientDataJSON)),
+    authenticatorData: bytesToBase64url(new Uint8Array(assertion.response.authenticatorData)),
+    signature: bytesToBase64url(new Uint8Array(assertion.response.signature)),
+    credentialId: bytesToBase64url(new Uint8Array(assertion.rawId)),
     created: false,
   }
 }

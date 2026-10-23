@@ -316,9 +316,9 @@ app.post('/api/signin/verify', limitAuth, async (req, res) => {
       return res.status(503).json({ error: 'this server has no passkey configuration yet' })
     }
 
-    const known = Boolean(await users.byEmailHash(await emailHash(result.email)))
+    const user = await users.byEmailHash(await emailHash(result.email))
     res.json({
-      known,
+      known: Boolean(user),
       email: result.email,
       rpId: passkey.RP_ID,
       rpName: passkey.RP_NAME,
@@ -341,28 +341,65 @@ app.post('/api/signin/verify', limitAuth, async (req, res) => {
  */
 app.post('/api/signin/finish', limitAuth, async (req, res) => {
   try {
-    const { sessionId, pubKey, clientDataJSON, created } = req.body ?? {}
+    const {
+      sessionId, pubKey, clientDataJSON, authenticatorData, signature,
+      credentialPublicKey, created,
+    } = req.body ?? {}
+
     const email = otp.verifiedEmail(sessionId)
     if (!email) return res.status(401).json({ error: 'that sign-in has expired — start again' })
     if (!isHex(pubKey, 66)) return res.status(400).json({ error: 'pubKey must be a 33-byte compressed key' })
+
+    const hash = await emailHash(email)
+    const existing = await users.byEmailHash(hash)
+
+    // A returning user is verified against the credential already on file, so
+    // the page cannot nominate a different one. A new user registers theirs.
+    const onFile = existing?.credential?.spki ?? null
+    if (onFile && credentialPublicKey && credentialPublicKey !== onFile) {
+      return res.status(401).json({ error: 'that is not the passkey this address is registered to' })
+    }
+
+    let credential
+    try {
+      credential = passkey.credentialKey(onFile ?? credentialPublicKey)
+    } catch (err) {
+      return res.status(400).json({ error: err.message })
+    }
 
     const ceremony = await passkey.checkCeremony({
       email,
       sessionId,
       clientDataJSON,
-      expectedType: created ? 'webauthn.create' : 'webauthn.get',
+      authenticatorData,
+      signature,
+      credentialPublicKey: credential.spki,
+      // Sign-up creates the passkey and then immediately asserts it; the
+      // assertion is what is verified, because that is what carries a
+      // signature we can check against the key being registered.
+      expectedType: 'webauthn.get',
+      previousSignCount: existing?.signCount ?? 0,
     })
     if (!ceremony.ok) return res.status(401).json({ error: ceremony.error })
 
     const user = await users.bind({
-      emailHash: await emailHash(email),
+      emailHash: hash,
       pubKey,
       address: addressFromPublicKey(pubKey),
+      credential,
+      signCount: ceremony.signCount,
     })
     otp.close(sessionId)
 
     const named = await names.reverse(pubKey)
-    res.json({ pubKey: user.pubKey, address: user.address, name: named?.name ?? null })
+    res.json({
+      pubKey: user.pubKey,
+      address: user.address,
+      name: named?.name ?? null,
+      // The page shows this so a user can tell which credential they are on.
+      credential: { x: credential.x, y: credential.y },
+      registered: !onFile,
+    })
   } catch (err) {
     res.status(400).json({ error: err.message })
   }

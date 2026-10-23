@@ -52,7 +52,7 @@ export async function byPubKey(pubKey) {
  * different person holding the mailbox — and in both cases the files already
  * encrypted to the first key would become unopenable. Better to say so.
  */
-export async function bind({ emailHash, pubKey, address }) {
+export async function bind({ emailHash, pubKey, address, credential, signCount = 0 }) {
   const all = await load()
   const existing = all[emailHash]
 
@@ -61,11 +61,20 @@ export async function bind({ emailHash, pubKey, address }) {
       'that address already signs in with a different passkey. Use the passkey you signed up with — a new one derives a new key, and files sent to the old one could no longer be opened.',
     )
   }
+  // Same reasoning one level down: the credential is what the delivery
+  // contract verifies against, so it is fixed at sign-up too.
+  if (existing?.credential && credential && existing.credential.spki !== credential.spki) {
+    throw new Error('that address is already registered to a different passkey credential')
+  }
 
   all[emailHash] = {
     emailHash,
     pubKey,
     address,
+    // The credential's P-256 public key, in both the form WebAuthn hands over
+    // and the x/y form the precompile takes.
+    credential: existing?.credential ?? credential ?? null,
+    signCount: Math.max(signCount, existing?.signCount ?? 0),
     name: existing?.name ?? null,
     firstSeenAt: existing?.firstSeenAt ?? Date.now(),
     lastSeenAt: Date.now(),
