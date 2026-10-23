@@ -24,6 +24,8 @@ import * as otp from './otp.js'
 import * as passkey from './passkey.js'
 import * as users from './users.js'
 import { emailHash, normaliseEmail } from './secrets.js'
+import * as pages from './pages.js'
+import { BEE_URL } from './bee.js'
 import { keccak256, toHex as viemHex } from 'viem'
 import { issueNonce, requireSignature } from './auth.js'
 import { transferDigest, verify, fromHex, toHex, addressFromPublicKey } from '../shared/crypto.js'
@@ -55,6 +57,54 @@ function publicOrigin(req) {
 // Behind Caddy or nginx, the client address arrives in a forwarded header;
 // without this every visitor looks like the proxy and rate limiting is useless.
 app.set('trust proxy', 1)
+
+/**
+ * The sign-in domain, served from the allow-list.
+ *
+ * A request to `v1.<signin domain>` is answered with the bytes of whichever
+ * Swarm reference v1 was published at, fetched through the local Bee node. A
+ * request to a version this gateway has not published is a 404 — not the
+ * current version, not a redirect. The whole point of pinning a version is
+ * that asking for it gets that version or nothing.
+ *
+ * Runs before the app's own routes, because these hostnames serve one thing
+ * and must never fall through to the gateway's API or its lander.
+ */
+app.use(async (req, res, next) => {
+  const route = pages.routeFor(req.get('host'))
+  if (!route) return next()
+
+  // The apex of the sign-in domain is a signpost, not a page: it points at
+  // whichever version is current so a bare link still lands somewhere real.
+  if (route.apex) {
+    const now = await pages.current()
+    if (!now) return res.status(404).type('text/plain').send('no sign-in page has been published yet')
+    return res.redirect(302, `https://${now.version}.${pages.SIGNIN_DOMAIN}${req.originalUrl}`)
+  }
+
+  const reference = await pages.referenceFor(route.version)
+  if (!reference) {
+    return res.status(404).type('text/plain').send('no such sign-in page version')
+  }
+
+  try {
+    const upstream = await fetch(`${BEE_URL}/bzz/${reference}${req.path}`, {
+      headers: { accept: req.get('accept') ?? '*/*' },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!upstream.ok) return res.status(upstream.status).type('text/plain').send('not found in that version')
+
+    const type = upstream.headers.get('content-type')
+    if (type) res.set('Content-Type', type)
+    // Immutable by construction: a version is a hash, so it can be cached hard.
+    res.set('Cache-Control', 'public, max-age=31536000, immutable')
+    res.set('X-Content-Type-Options', 'nosniff')
+    res.set('Referrer-Policy', 'no-referrer')
+    res.send(Buffer.from(await upstream.arrayBuffer()))
+  } catch (err) {
+    res.status(502).type('text/plain').send(`could not fetch that version from Swarm: ${err.message}`)
+  }
+})
 
 app.use(express.json({ limit: '64mb' }))
 
@@ -221,6 +271,7 @@ app.get('/api/health', async (_req, res) => {
     parentName: state.parentName,
     receiptsAddress: state.receiptsAddress,
     swarm: await swarm.stampInfo().catch((e) => ({ error: e.message })),
+    signInPage: await pages.current(),
   })
 })
 

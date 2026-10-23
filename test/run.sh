@@ -17,6 +17,7 @@ PINESIGN_STORAGE_DIR=.storage-test \
 PORT="$PORT" \
 PASSKEY_RP_ID=id.test.local \
 PINESIGN_PARENT=test.eth \
+SIGNIN_DOMAIN=id.test.local \
 RATE_AUTH_PER_MIN=1000 \
 RATE_SEND_PER_MIN=1000 \
 RATE_CODE_PER_MIN=1000 \
@@ -30,4 +31,5 @@ for _ in $(seq 1 60); do
   perl -e 'select(undef,undef,undef,0.25)'
 done
 
-BASE="http://localhost:$PORT" SERVER_LOG="$LOG" SIGNIN_ORIGIN=https://v1.id.test.local node test/flow.js
+BASE="http://localhost:$PORT" SERVER_LOG="$LOG" SIGNIN_ORIGIN=https://v1.id.test.local \
+PINESIGN_STORAGE_DIR=.storage-test SIGNIN_DOMAIN=id.test.local node test/flow.js

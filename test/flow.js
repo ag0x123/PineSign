@@ -9,7 +9,9 @@ import {
 } from '../shared/crypto.js'
 import { sha256 } from '@noble/hashes/sha256'
 import { readFile } from 'node:fs/promises'
+import http from 'node:http'
 import { keyFromPrfOutput, PRF_SALT } from '../shared/prf.js'
+import * as pages from '../gateway/pages.js'
 
 const BASE = process.env.BASE ?? 'http://localhost:8799'
 const SERVER_LOG = process.env.SERVER_LOG ?? '.storage-test/server.log'
@@ -70,6 +72,62 @@ async function codeFromLog() {
 function clientData({ type, challenge, origin = SIGNIN_ORIGIN }) {
   return Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false })).toString('base64')
 }
+
+/**
+ * Host-based routing has to be driven with a real Host header, which fetch is
+ * not allowed to set — so these go out over plain http.
+ */
+function asHost(host, path = '/') {
+  const url = new URL(BASE)
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: url.hostname, port: url.port, path, method: 'GET', headers: { host } },
+      (res) => {
+        let body = ''
+        res.on('data', (c) => (body += c))
+        res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location, body }))
+      },
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+console.log('\nsign-in page allow-list')
+// The sign-in domain serves published versions and nothing else. An
+// unpublished version is a 404, not a quiet fall-through to the lander.
+const unpublished = await asHost('v9.id.test.local')
+check('an unpublished version is refused', unpublished.status === 404)
+const notAVersion = await asHost('admin.id.test.local')
+check('a subdomain that is not a version is refused', notAVersion.status === 404)
+const apex = await asHost('id.test.local')
+check('the sign-in apex has nothing to point at yet', apex.status === 404)
+const onApi = await asHost('id.test.local', '/api/health')
+check('the API is not reachable under the sign-in domain', onApi.status === 404)
+const lander = await fetch(`${BASE}/api/health`)
+check('the gateway itself still answers on its own host', lander.status === 200)
+
+// The list itself: versions are named, fixed, and the apex follows the newest.
+check('a host under the sign-in domain names a version', pages.routeFor('v3.id.test.local')?.version === 'v3')
+check('the sign-in domain itself is the apex', pages.routeFor('id.test.local')?.apex === true)
+check('an unrelated host is not our business', pages.routeFor('example.com') === null)
+check('a lookalike suffix is not our business', pages.routeFor('evil-id.test.local') === null)
+
+const ref1 = 'a'.repeat(64)
+await pages.publish({ version: 'v1', reference: ref1, files: 3, bytes: 1234 })
+check('a published version is served', (await pages.referenceFor('v1')) === ref1)
+check('and becomes the one the apex points at', (await pages.current())?.version === 'v1')
+check('an unpublished version has no reference', (await pages.referenceFor('v2')) === null)
+check('a non-version is never a reference', (await pages.referenceFor('../../etc')) === null)
+
+let repointed = null
+try {
+  await pages.publish({ version: 'v1', reference: 'b'.repeat(64), files: 3, bytes: 1234 })
+} catch (err) {
+  repointed = err.message
+}
+check('a published version cannot be repointed', /already published/.test(repointed ?? ''))
+check('and the error says to publish the next one', /v2/.test(repointed ?? ''))
 
 console.log('\nkey derivation')
 // The passkey's own output is the one thing a test cannot produce, so it is
