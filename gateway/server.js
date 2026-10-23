@@ -268,7 +268,10 @@ app.get('/api/health', async (_req, res) => {
   res.json({
     ok: true,
     configured: state.step === 'ready',
-    parentName: state.parentName,
+    // The parent actually in use, which is not always the one setup recorded:
+    // PINESIGN_PARENT can supply it, and reporting the stored value then says
+    // "none" about a server that is happily issuing subnames.
+    parentName: names.getParent(),
     receiptsAddress: state.receiptsAddress,
     swarm: await swarm.stampInfo().catch((e) => ({ error: e.message })),
     signInPage: await pages.current(),
