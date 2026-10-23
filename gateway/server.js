@@ -182,7 +182,9 @@ app.post('/api/setup/register-name', setup.requireSetupToken, async (req, res) =
 
 app.post('/api/setup/resolver', setup.requireSetupToken, async (_req, res) => {
   try {
-    res.json(await setup.attachResolver())
+    const result = await setup.attachResolver()
+    names.setResolver(await setup.resolverAddress())
+    res.json(result)
   } catch (err) {
     res.status(400).json({ error: tidy(err) })
   }
@@ -377,7 +379,16 @@ app.post('/api/name/register', limitSend, requireSignature, async (req, res) => 
     const record = await names.register(String(label ?? '').toLowerCase(), {
       pubKey: req.pubKey,
       address: addressFromPublicKey(req.pubKey),
+      // Set at sign-in, under a key only this server holds. It is what lets an
+      // invitation addressed to an email find the key that answers to it,
+      // without the address itself being published.
+      emailHash: await users.emailHashFor(req.pubKey),
     })
+    await users.setName(req.pubKey, record.name)
+
+    // The records themselves, on chain, where anyone can read them and this
+    // server cannot quietly change what it told someone yesterday.
+    publishUser(record).catch((err) => console.log(`  user records failed: ${err.message}`))
 
     // Arrived via an invitation: close the loop and tell the sender to proceed.
     const { inviteId } = req.body
@@ -625,6 +636,27 @@ function serialize(work) {
   return run
 }
 
+/**
+ * A user's own records: their key and their keyed email hash, under their name.
+ *
+ * Deliberately not frozen. A receipt is final the moment it is claimed, but a
+ * user's records are the live answer to "where do I encrypt to for this
+ * person", and that has to stay writable.
+ */
+function publishUser(record) {
+  return enqueue(record.name, () => serialize(async () => {
+    const resolver = await setup.resolverAddress()
+    const key = await setup.deployerKey()
+    if (!resolver || !key) return
+    const { tx } = await ens.writeRecords(key, {
+      resolver,
+      name: record.name,
+      records: names.recordsFor(record),
+    })
+    console.log(`  published ${record.name} ${tx}`)
+  }))
+}
+
 function attest(id, records) {
   return enqueue(id, () => serialize(async () => {
     const resolver = await setup.resolverAddress()
@@ -674,6 +706,7 @@ app.use(express.static(path.join(__dirname, '..', 'web'), {
 app.listen(PORT, HOST, async () => {
   const state = await setup.status()
   names.setParent(state.parentName)
+  names.setResolver(await setup.resolverAddress())
 
   console.log(`pinesign gateway on http://localhost:${PORT}  [swarm: ${await swarm.mode()}]`)
   if (state.step === 'ready') {

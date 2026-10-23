@@ -16,6 +16,7 @@ PINESIGN_SKIP_ENV_FILE=1 \
 PINESIGN_STORAGE_DIR=.storage-test \
 PORT="$PORT" \
 PASSKEY_RP_ID=id.test.local \
+PINESIGN_PARENT=test.eth \
 SIGNIN_ORIGINS=https://v1.id.test.local \
 node gateway/server.js > "$LOG" 2>&1 &
 SERVER=$!

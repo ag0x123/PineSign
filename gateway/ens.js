@@ -25,8 +25,23 @@ import { keccak256, encodePacked, stringToBytes, toHex as viemHex } from 'viem'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-export const REGISTRAR = process.env.ENS_V2_REGISTRAR ?? '0xa88553f454b77203b0d036a05c894d555eaaa2cc'
-export const PAYMENT_TOKEN = process.env.ENS_V2_PAYMENT_TOKEN ?? '0x768f42455a2d082e23ceef7d51e5787c82d67a39'
+/**
+ * The registrar and the token it charges in, both from the environment. They
+ * differ per chain and per ENS deployment, so a value compiled in here would
+ * be right for exactly one network and quietly wrong everywhere else.
+ */
+export const REGISTRAR = process.env.ENS_V2_REGISTRAR ?? null
+export const PAYMENT_TOKEN = process.env.ENS_V2_PAYMENT_TOKEN ?? null
+
+function registrarAddress() {
+  if (!REGISTRAR) throw new Error('ENS_V2_REGISTRAR is not set — see .env.example')
+  return REGISTRAR
+}
+
+function paymentToken() {
+  if (!PAYMENT_TOKEN) throw new Error('ENS_V2_PAYMENT_TOKEN is not set — see .env.example')
+  return PAYMENT_TOKEN
+}
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const ZERO_BYTES32 = `0x${'00'.repeat(32)}`
@@ -48,7 +63,7 @@ async function registrarAbi() {
 }
 
 async function read(functionName, args = []) {
-  return publicClient.readContract({ address: REGISTRAR, abi: await registrarAbi(), functionName, args })
+  return publicClient.readContract({ address: registrarAddress(), abi: await registrarAbi(), functionName, args })
 }
 
 export async function isAvailable(label) {
@@ -57,7 +72,7 @@ export async function isAvailable(label) {
 
 /** Price in the payment token, for a duration in seconds. */
 export async function registerPrice(label, duration) {
-  const [base, premium] = await read('getRegisterPrice', [label, BigInt(duration), PAYMENT_TOKEN])
+  const [base, premium] = await read('getRegisterPrice', [label, BigInt(duration), paymentToken()])
   const total = base + premium
   return { wei: total.toString(), formatted: formatUnits(total, 6), symbol: 'USDC' }
 }
@@ -104,24 +119,24 @@ export async function register(privateKey, label, { years = 1, onStep } = {}) {
   // costs gas and nothing else — but the balance and allowance still have to
   // be there before the registrar will take it.
   const balance = await publicClient.readContract({
-    address: PAYMENT_TOKEN, abi: TOKEN_ABI, functionName: 'balanceOf', args: [account.address],
+    address: paymentToken(), abi: TOKEN_ABI, functionName: 'balanceOf', args: [account.address],
   })
   if (balance < needed) {
     onStep?.('Minting the registration fee…')
     const mintHash = await wallet.writeContract({
-      address: PAYMENT_TOKEN, abi: TOKEN_ABI, functionName: 'mint',
+      address: paymentToken(), abi: TOKEN_ABI, functionName: 'mint',
       args: [account.address, needed * 10n], // enough for renewals too
     })
     await publicClient.waitForTransactionReceipt({ hash: mintHash })
   }
 
   const allowance = await publicClient.readContract({
-    address: PAYMENT_TOKEN, abi: TOKEN_ABI, functionName: 'allowance', args: [account.address, REGISTRAR],
+    address: paymentToken(), abi: TOKEN_ABI, functionName: 'allowance', args: [account.address, registrarAddress()],
   })
   if (allowance < needed) {
     onStep?.('Approving the registrar…')
     const approveHash = await wallet.writeContract({
-      address: PAYMENT_TOKEN, abi: TOKEN_ABI, functionName: 'approve', args: [REGISTRAR, needed * 100n],
+      address: paymentToken(), abi: TOKEN_ABI, functionName: 'approve', args: [registrarAddress(), needed * 100n],
     })
     await publicClient.waitForTransactionReceipt({ hash: approveHash })
   }
@@ -132,7 +147,7 @@ export async function register(privateKey, label, { years = 1, onStep } = {}) {
   onStep?.('Committing…')
   const commitment = await read('makeCommitment', commitArgs)
   const commitHash = await wallet.writeContract({
-    address: REGISTRAR, abi, functionName: 'commit', args: [commitment],
+    address: registrarAddress(), abi, functionName: 'commit', args: [commitment],
   })
   await publicClient.waitForTransactionReceipt({ hash: commitHash })
 
@@ -141,17 +156,17 @@ export async function register(privateKey, label, { years = 1, onStep } = {}) {
   await new Promise((r) => setTimeout(r, (minAge + 5) * 1000))
 
   const registerArgs = [
-    label, account.address, secret, ZERO_ADDRESS, ZERO_ADDRESS, duration, PAYMENT_TOKEN, ZERO_BYTES32,
+    label, account.address, secret, ZERO_ADDRESS, ZERO_ADDRESS, duration, paymentToken(), ZERO_BYTES32,
   ]
 
   // Simulating first means a failure costs nothing and explains itself.
   onStep?.('Registering…')
   await publicClient.simulateContract({
-    address: REGISTRAR, abi, functionName: 'register', args: registerArgs, account: account.address,
+    address: registrarAddress(), abi, functionName: 'register', args: registerArgs, account: account.address,
   })
 
   const registerHash = await wallet.writeContract({
-    address: REGISTRAR, abi, functionName: 'register', args: registerArgs,
+    address: registrarAddress(), abi, functionName: 'register', args: registerArgs,
   })
   const receipt = await publicClient.waitForTransactionReceipt({ hash: registerHash })
   if (receipt.status !== 'success') throw new Error('the registration transaction reverted')

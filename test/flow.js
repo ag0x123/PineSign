@@ -151,7 +151,8 @@ check('a second, different key for one address is refused', otherKey.status === 
 
 console.log('\nnames')
 const aliceName = await post('/api/name/register', { ...(await auth(alicePriv, alicePub)), label: 'alice' + Date.now() % 100000 })
-check('a name can be claimed', aliceName.status === 200 && aliceName.body.name.endsWith('.pinesign.eth'))
+check('a name can be claimed', aliceName.status === 200 && aliceName.body.name.endsWith('.test.eth'))
+check('the name carries the keyed email hash', typeof aliceName.body.emailHash === 'string' && aliceName.body.emailHash.length === 64)
 const bobName = await post('/api/name/register', { ...(await auth(bobPriv, bobPub)), label: 'bob' + Date.now() % 100000 })
 check('a second name can be claimed', bobName.status === 200)
 
