@@ -6,7 +6,7 @@
  * states, so the nav never lies about whether you have an account.
  */
 
-import { identity as getIdentity } from '../../shared/keysource.js'
+import { signedIn, current } from '../../shared/keysource.js'
 import { Gateway } from '../../shared/client.js'
 
 const gateway = new Gateway(location.origin)
@@ -21,7 +21,7 @@ export async function renderAccountChip(onGetStarted) {
   const slot = document.getElementById('account-slot')
   if (!slot) return
 
-  const identity = await getIdentity().catch(() => null)
+  const identity = signedIn() ? current() : null
 
   if (!identity) {
     slot.innerHTML = ''
@@ -38,7 +38,7 @@ export async function renderAccountChip(onGetStarted) {
   }
 
   const named = await gateway.reverseName(identity.publicKey)
-  const label = named ? named.name : short(identity.address)
+  const label = named?.name ?? short(identity.address)
 
   slot.innerHTML = `
     <div class="account-chip" tabindex="0">

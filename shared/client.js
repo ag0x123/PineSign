@@ -2,23 +2,10 @@
  * Gateway client, shared by every page.
  *
  * It never handles a private key. Anything that needs signing goes through a
- * `signer`, so the gateway learns who is asking without the key ever leaving
- * the page that derived it.
+ * `signer`, which in the app is a message to the sign-in window — so the
+ * gateway learns who is asking without the key ever leaving the page that
+ * derived it.
  */
-
-import { sha256 } from '@noble/hashes/sha256'
-import { sign, toHex } from './crypto.js'
-
-/** Signer backed by the key this page derived. */
-export function localSigner(identity) {
-  return {
-    publicKeyHex: identity.publicKeyHex,
-    address: identity.address,
-    async signDigest(digest) {
-      return toHex(sign(digest, identity.privateKey))
-    },
-  }
-}
 
 export class Gateway {
   constructor(baseUrl) {
@@ -40,12 +27,17 @@ export class Gateway {
     })
   }
 
-  /** A fresh nonce, signed — the gateway's proof of who is asking. */
+  /**
+   * A fresh nonce, signed — the gateway's proof of who is asking.
+   *
+   * The signer is handed the nonce rather than a digest. It builds the digest
+   * itself, so whatever holds the key only ever signs things it recognises,
+   * never an opaque 32 bytes this code chose.
+   */
   async #auth(signer) {
     const pubKey = signer.publicKeyHex
     const { nonce } = await this.#post('/api/nonce', { pubKey })
-    const signature = await signer.signDigest(sha256(new TextEncoder().encode(nonce)))
-    return { pubKey, nonce, signature }
+    return { pubKey, nonce, signature: await signer.signNonce(nonce) }
   }
 
   health() {

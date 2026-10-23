@@ -164,8 +164,13 @@
       <li id="s-key" class="todo">
         <div class="marker"></div>
         <div class="body">
-          <h3>Your key</h3>
-          <p class="hint" id="key-hint">Checking…</p>
+          <h3>Sign in</h3>
+          <p class="hint" id="key-hint">
+            A code to your email, then your passkey. Your key is derived in the sign-in
+            window from the passkey itself — stored nowhere, sent nowhere.
+          </p>
+          <div class="row"><button class="primary" id="signin">Sign in</button></div>
+          <p class="status" id="signin-status"></p>
           <code class="key" id="enc-key" hidden></code>
         </div>
       </li>

@@ -1,12 +1,14 @@
 /**
  * The sign-up modal.
  *
- * Two things, in order: a key, then a name. The name is what makes you
- * reachable — claiming it is what publishes the key other people encrypt to.
+ * Two things, in order: sign in, then take a name. Signing in opens the sign-in
+ * page in its own window, which is where the key is derived and where it stays;
+ * this page only ever learns the public half. Claiming a name is what publishes
+ * that public key for other people to encrypt to.
  */
 
 import { Gateway } from '../../shared/client.js'
-import { identity as getIdentity, signer as getSigner } from '../../shared/keysource.js'
+import { signIn, signedIn, current, signer as getSigner } from '../../shared/keysource.js'
 import { renderAccountChip } from './session.js'
 
 const el = (id) => document.getElementById(id)
@@ -49,12 +51,38 @@ export function closeModal() {
 // ---- steps ----
 
 function renderKey() {
+  if (!identity) {
+    mark('s-key', 'todo')
+    return
+  }
   el('enc-key').textContent = identity.publicKey
   el('enc-key').hidden = false
+  el('signin').hidden = true
   el('key-hint').textContent =
-    'Held in this browser. It is what files are encrypted to, and the only thing that can open them.'
+    'Signed in. Your key is in the sign-in window — keep it open while you send or open a file.'
   mark('s-key', 'done')
 }
+
+el('signin').addEventListener('click', async () => {
+  el('signin').disabled = true
+  status('signin-status', 'Waiting for the sign-in window…')
+  try {
+    identity = await signIn()
+    status('signin-status', '')
+    renderKey()
+    await refreshName()
+    renderAccountChip(openModal)
+  } catch (err) {
+    // A blocked pop-up is not the user's fault and not a dead end: the same
+    // page works as a full redirect, it just cannot hand a key back afterwards.
+    status('signin-status', err.message, 'error')
+    if (err.code === 'popup-blocked') {
+      el('signin').textContent = 'Open the sign-in page'
+      el('signin').onclick = () => location.assign(err.url)
+    }
+    el('signin').disabled = false
+  }
+})
 
 function renderName() {
   if (name) {
@@ -194,7 +222,7 @@ async function boot() {
   const health = await gateway.health().catch(() => null)
   if (health?.parentName) el('suffix').textContent = `.${health.parentName}`
 
-  identity = await getIdentity()
+  identity = signedIn() ? current() : null
   renderKey()
 
   await refreshName()

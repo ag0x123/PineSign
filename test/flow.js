@@ -9,6 +9,7 @@ import {
 } from '../shared/crypto.js'
 import { sha256 } from '@noble/hashes/sha256'
 import { readFile } from 'node:fs/promises'
+import { keyFromPrfOutput, PRF_SALT } from '../shared/prf.js'
 
 const BASE = process.env.BASE ?? 'http://localhost:8799'
 const SERVER_LOG = process.env.SERVER_LOG ?? '.storage-test/server.log'
@@ -66,6 +67,18 @@ async function codeFromLog() {
 function clientData({ type, challenge, origin = SIGNIN_ORIGIN }) {
   return Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false })).toString('base64')
 }
+
+console.log('\nkey derivation')
+// The passkey's own output is the one thing a test cannot produce, so it is
+// supplied here. Everything downstream of it is the real derivation.
+const prfOutput = new Uint8Array(32).fill(7)
+const derived = keyFromPrfOutput(prfOutput)
+check('the salt is the one the gateway advertises', PRF_SALT === 'pinesign/v1')
+check('a PRF output derives a usable key', derived.length === 32)
+check('the same output always derives the same key', toHex(keyFromPrfOutput(prfOutput)) === toHex(derived))
+const otherOutput = new Uint8Array(32).fill(8)
+check('a different output derives a different key', toHex(keyFromPrfOutput(otherOutput)) !== toHex(derived))
+check('the derived key has a public half', toHex(publicKeyFrom(derived)).length === 66)
 
 console.log('\nsign-in')
 const signInEmail = `alice+${Date.now()}@example.com`

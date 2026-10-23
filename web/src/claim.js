@@ -1,13 +1,13 @@
 /**
  * Claim page.
  *
- * Fetches ciphertext, decrypts it with the recipient's own key and signs the
- * receipt in one step, so the page cannot take the file and then decline to
- * sign for it.
+ * Fetches the ciphertext and hands it to the sign-in window, which decrypts it
+ * and signs the receipt in one operation. This page never holds the key, so it
+ * cannot read the file without leaving a receipt behind.
  */
 
 import { Gateway } from '../../shared/client.js'
-import { identity as getIdentity, openTransfer, signer } from '../../shared/keysource.js'
+import { signIn, signedIn, current, openTransfer, signer } from '../../shared/keysource.js'
 
 const el = (id) => document.getElementById(id)
 const gateway = new Gateway(location.origin)
@@ -45,11 +45,6 @@ function showReceipt(claim) {
 async function load() {
   if (!id) return subtitle('No transfer in this link.', '#ff9c7a')
 
-  identity = await getIdentity()
-  const named = await gateway.reverseName(identity.publicKey)
-  el('pubkey').textContent = named ? named.name : identity.publicKey
-  el('identity-panel').hidden = false
-
   try {
     transfer = await gateway.transfer(id)
   } catch (err) {
@@ -67,25 +62,48 @@ async function load() {
     return subtitle('This transfer expired. The file is gone.', '#ff9c7a')
   }
 
-  el('key-mode').textContent =
-    'Derived in this browser from your passkey. It is never stored and never sent.'
-
-  // The recipient is named in the transfer itself, so a link alone opens nothing.
-  if (transfer.recipientPubKey !== identity.publicKey) {
-    el('identity-hint').textContent =
-      'This file was sent to a different key. Give the sender the name above and ask them to send it again.'
-    return subtitle('Not addressed to this device.', '#ff9c7a')
-  }
-
-  el('action-panel').hidden = false
-
   if (transfer.claim) {
     subtitle('Already delivered.', 'var(--glow)')
+    el('identity-panel').hidden = true
     return showReceipt(transfer.claim)
   }
 
-  subtitle('Waiting for you to accept.')
+  subtitle('Sign in to open it.')
+  el('signin-panel').hidden = false
 }
+
+/**
+ * Signing in is what produces the key, so it has to happen before the file can
+ * be checked as addressed to anyone at all.
+ */
+el('signin').addEventListener('click', async () => {
+  el('signin').disabled = true
+  say('Waiting for the sign-in window…')
+  try {
+    identity = await signIn()
+    el('signin-panel').hidden = true
+    say('')
+
+    const named = await gateway.reverseName(identity.publicKey)
+    el('pubkey').textContent = named?.name ?? identity.publicKey
+    el('key-mode').textContent =
+      'Derived in the sign-in window from your passkey. It is never stored and never sent.'
+    el('identity-panel').hidden = false
+
+    // The recipient is named in the transfer itself, so a link alone opens nothing.
+    if (transfer.recipientPubKey !== identity.publicKey) {
+      el('identity-hint').textContent =
+        'This file was sent to a different key. Give the sender the name above and ask them to send it again.'
+      return subtitle('Not addressed to you.', '#ff9c7a')
+    }
+
+    el('action-panel').hidden = false
+    subtitle('Waiting for you to accept.')
+  } catch (err) {
+    say(err.message, 'error')
+    el('signin').disabled = false
+  }
+})
 
 el('accept').addEventListener('click', async () => {
   el('accept').disabled = true
@@ -93,11 +111,12 @@ el('accept').addEventListener('click', async () => {
     say('Fetching the encrypted file…')
     const blob = await gateway.blob(id)
 
-    // Decryption and the receipt are one step: the page cannot take the file
-    // and then decline to sign for it.
-    say('Decrypting…')
+    // Decryption and the receipt are one step, and both happen in the sign-in
+    // window: this page cannot take the file and then decline to sign for it,
+    // because it never has the key to decrypt with on its own.
+    say('Decrypting in the sign-in window…')
     const opened = await openTransfer({
-      ciphertext: Array.from(blob),
+      ciphertext: blob,
       senderPubKey: transfer.senderPubKey,
       expectedCommitment: transfer.fileCommitment,
     })

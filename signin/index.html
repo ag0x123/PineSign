@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in · PineSign</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<main>
+  <header>
+    <h1>PineSign</h1>
+    <p class="sub">Your key is derived here, in this page, and never leaves it.</p>
+  </header>
+
+  <section id="step-email" hidden>
+    <h2>Your email</h2>
+    <p class="hint">We send a six-digit code. It proves the address is yours and nothing else.</p>
+    <form id="email-form">
+      <input id="email" type="email" inputmode="email" autocomplete="email"
+             placeholder="you@example.com" required spellcheck="false" />
+      <button id="email-send" type="submit">Send the code</button>
+    </form>
+  </section>
+
+  <section id="step-code" hidden>
+    <h2>The code</h2>
+    <p class="hint">Sent to <strong id="code-sent-to"></strong>. It is good for ten minutes.</p>
+    <form id="code-form">
+      <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+             pattern="[0-9]{6}" maxlength="6" placeholder="123456" required spellcheck="false" />
+      <button id="code-send" type="submit">Check it</button>
+    </form>
+  </section>
+
+  <section id="step-passkey" hidden>
+    <h2>Your passkey</h2>
+    <p class="hint" id="passkey-what"></p>
+    <button id="passkey-go" type="button">Continue with passkey</button>
+    <p class="hint small">
+      The passkey's PRF extension returns a secret only it can produce. That secret becomes
+      your encryption key — derived here every time, stored nowhere.
+    </p>
+  </section>
+
+  <section id="step-done" hidden>
+    <h2>Signed in</h2>
+    <p class="hint">You are <strong id="who"></strong>.</p>
+    <p class="hint small" id="close-note" hidden>
+      Keep this window open while you send or open a file. Everything that touches your key
+      happens here.
+    </p>
+  </section>
+
+  <p class="status" id="status"></p>
+</main>
+
+<script type="module" src="signin.bundle.js"></script>
+</body>
+</html>
