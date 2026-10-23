@@ -31,7 +31,10 @@ async function post(path, body) {
 }
 
 async function auth(priv, pub) {
-  const { body } = await post('/api/nonce', { pubKey: pub })
+  const { status, body } = await post('/api/nonce', { pubKey: pub })
+  // A missing nonce here used to surface as "pubKey required" three calls
+  // later, which is a long way from the thing that actually went wrong.
+  if (!body.nonce) throw new Error(`no nonce issued (${status}): ${body.error ?? 'unknown'}`)
   const signature = toHex(sign(sha256(new TextEncoder().encode(body.nonce)), priv))
   return { pubKey: pub, nonce: body.nonce, signature }
 }
@@ -169,6 +172,60 @@ const unnamed = await post('/api/send', {
   senderSignature: '00'.repeat(64), ciphertext: 'AAAA',
 })
 check('an unnamed sender cannot send', unnamed.status === 403)
+
+console.log('\nrecipients')
+// Alice signed in with signInEmail earlier, so that address resolves to her
+// key — read back through the same path a sender would use.
+const knownTo = await post('/api/recipient', { ...(await auth(bobPriv, bobPub)), email: signInEmail })
+check('a known address resolves to a key', knownTo.status === 200 && knownTo.body.known === true)
+check('and to the key that address signed in with', knownTo.body.pubKey === alicePub)
+
+const strangerTo = await post('/api/recipient', {
+  ...(await auth(bobPriv, bobPub)),
+  email: `stranger+${Date.now()}@example.com`,
+  fromEmail: 'bob@example.com',
+})
+check('an unknown address is invited instead', strangerTo.status === 200 && strangerTo.body.known === false)
+check('the invitation is what the sender is told about', typeof strangerTo.body.id === 'string')
+
+const unnamedAsk = await post('/api/recipient', { ...(await auth(evePriv, evePub)), email: signInEmail })
+check('an unnamed sender cannot look anyone up', unnamedAsk.status === 403)
+
+// The whole loop: Bob invites an address, that person signs in and claims a
+// name quoting the invitation, and Bob is emailed that he can go ahead.
+const carolEmail = `carol+${Date.now()}@example.com`
+const carolInvite = await post('/api/recipient', {
+  ...(await auth(bobPriv, bobPub)),
+  email: carolEmail,
+  fromEmail: 'bob-receipts@example.com',
+})
+
+const carolPriv = generatePrivateKey(), carolPub = toHex(publicKeyFrom(carolPriv))
+const carolCode = await post('/api/signin/code', { email: carolEmail })
+const carolVerified = await post('/api/signin/verify', { sessionId: carolCode.body.sessionId, code: await codeFromLog() })
+await post('/api/signin/finish', {
+  sessionId: carolCode.body.sessionId,
+  pubKey: carolPub,
+  created: true,
+  clientDataJSON: clientData({ type: 'webauthn.create', challenge: carolVerified.body.challenge }),
+})
+const carolName = await post('/api/name/register', {
+  ...(await auth(carolPriv, carolPub)),
+  label: 'carol' + Date.now() % 100000,
+  inviteId: carolInvite.body.id,
+})
+check('the invited party can claim a name', carolName.status === 200)
+
+const inviteNow = await (await fetch(`${BASE}/api/invite/${carolInvite.body.id}`)).json()
+check('the invitation is marked accepted', inviteNow.status === 'accepted')
+check('and names who accepted it', inviteNow.acceptedBy === carolName.body.name)
+
+const senderTold = await readFile(SERVER_LOG, 'utf8')
+check('the sender is emailed that they can send', senderTold.includes('bob-receipts@example.com'))
+
+// And now that address resolves, which is the point of the whole exchange.
+const carolNow = await post('/api/recipient', { ...(await auth(bobPriv, bobPub)), email: carolEmail })
+check('the invited address now resolves to their key', carolNow.body.known === true && carolNow.body.pubKey === carolPub)
 
 console.log('\nsend')
 const sharedAlice = deriveSharedKey(alicePriv, fromHex(bobPub))

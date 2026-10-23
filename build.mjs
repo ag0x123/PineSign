@@ -33,6 +33,7 @@ const define = {
 
 const targets = [
   { in: 'web/src/claim.js', out: 'web/claim.bundle.js' },
+  { in: 'web/src/send.js', out: 'web/send.bundle.js' },
   { in: 'web/src/setup.js', out: 'web/setup.bundle.js' },
   { in: 'web/src/lander.js', out: 'web/lander.bundle.js' },
   { in: 'web/src/nav.js', out: 'web/nav.bundle.js' },

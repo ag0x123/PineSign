@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Send a file · PineSign</title>
+  <link rel="icon" href="assets/favicon.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav id="nav" class="scrolled">
+  <a class="brand" href="/"><img src="assets/pine.png" alt="" /><span>PineSign</span></a>
+  <div class="links">
+    <a href="send.html">Send</a>
+    <a href="docs.html">Docs</a>
+    <span id="account-slot"></span>
+  </div>
+</nav>
+
+<main class="page">
+  <div class="inner">
+    <div class="hero">
+      <img src="assets/pine.png" alt="" />
+      <div>
+        <h1>Send a file</h1>
+        <p class="tagline">Encrypted to one person, and signed for before it leaves.</p>
+      </div>
+    </div>
+
+    <section class="panel" id="signin-panel" hidden>
+      <h2>Sign in</h2>
+      <p class="hint">
+        A code to your email, then your passkey. Your key is derived in the sign-in window
+        and stays there — this page never sees it.
+      </p>
+      <button class="primary" id="signin">Sign in</button>
+    </section>
+
+    <section class="panel" id="noname-panel" hidden>
+      <h2>Take a name first</h2>
+      <p class="hint">
+        A name is what publishes your key, and only a named sender can send.
+      </p>
+      <a class="primary" href="/#get-started" style="display:inline-block;text-decoration:none">Claim a name</a>
+    </section>
+
+    <section class="panel" id="compose" hidden>
+      <h2>Sending as <span class="mono" id="me"></span></h2>
+
+      <label for="to">Their email</label>
+      <input id="to" type="text" placeholder="bob@example.com" spellcheck="false" autocomplete="off" />
+      <div class="row"><button class="ghost" id="to-check" disabled>Look them up</button></div>
+      <p class="resolved" id="to-result"></p>
+
+      <label for="from" style="margin-top:14px">Your email, for the receipt</label>
+      <input id="from" type="text" placeholder="you@example.com" spellcheck="false" autocomplete="off" />
+
+      <label for="file" style="margin-top:14px">The file</label>
+      <input id="file" type="file" />
+      <p class="hint" id="file-name"></p>
+
+      <div class="row"><button class="primary" id="send" disabled>Encrypt and send</button></div>
+    </section>
+
+    <section class="panel" id="sent" hidden>
+      <h2>Sent</h2>
+      <p class="hint">Give them this link, or wait for the email we sent them.</p>
+      <a class="key" id="sent-link" href="#"></a>
+    </section>
+
+    <p class="status" id="status"></p>
+  </div>
+</main>
+
+<script type="module" src="send.bundle.js"></script>
+</body>
+</html>

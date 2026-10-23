@@ -114,13 +114,20 @@ el('inv-from').addEventListener('input', checkInviteForm)
 
 el('inv-send').addEventListener('click', async () => {
   el('inv-send').disabled = true
-  status('inv-status', 'Sending…')
+  status('inv-status', 'Looking them up…')
+  const to = el('inv-to').value.trim()
   try {
-    await gateway.invite(await getSigner(), {
-      toEmail: el('inv-to').value.trim(),
+    const result = await gateway.recipient(await getSigner(), {
+      email: to,
       fromEmail: el('inv-from').value.trim(),
     })
-    status('inv-status', `Invitation sent to ${el('inv-to').value.trim()}. You will get an email when they accept.`, 'done')
+
+    if (result.known) {
+      // Already has a key: there is nothing to wait for.
+      status('inv-status', `${result.name} already has a key — you can send to them now.`, 'done')
+    } else {
+      status('inv-status', `Invitation sent to ${to}. You will get an email when they are ready.`, 'done')
+    }
     el('inv-to').value = ''
     refreshInvites()
   } catch (err) {

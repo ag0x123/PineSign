@@ -17,6 +17,9 @@ PINESIGN_STORAGE_DIR=.storage-test \
 PORT="$PORT" \
 PASSKEY_RP_ID=id.test.local \
 PINESIGN_PARENT=test.eth \
+RATE_AUTH_PER_MIN=1000 \
+RATE_SEND_PER_MIN=1000 \
+RATE_CODE_PER_MIN=1000 \
 SIGNIN_ORIGINS=https://v1.id.test.local \
 node gateway/server.js > "$LOG" 2>&1 &
 SERVER=$!

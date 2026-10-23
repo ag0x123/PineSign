@@ -73,10 +73,14 @@ export class Gateway {
     })
   }
 
-  // ---- invitations ----
+  // ---- recipients ----
 
-  async invite(signer, { toEmail, fromEmail }) {
-    return this.#post('/api/invite', { ...(await this.#auth(signer)), toEmail, fromEmail })
+  /**
+   * Resolve an email address to a key, or invite it. One call, because from
+   * the sender's side "who is this person" is one question.
+   */
+  async recipient(signer, { email, fromEmail }) {
+    return this.#post('/api/recipient', { ...(await this.#auth(signer)), email, fromEmail })
   }
 
   inviteStatus(id) {

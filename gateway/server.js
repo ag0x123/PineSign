@@ -78,11 +78,15 @@ app.use((req, res, next) => {
   next()
 })
 
-// Anything that spends postage, mail or gas is limited; reads are not.
-const limitAuth = rateLimit({ key: 'auth', windowMs: 60_000, max: 20 })
-const limitSend = rateLimit({ key: 'send', windowMs: 60_000, max: 10 })
-const limitSetup = rateLimit({ key: 'setup', windowMs: 60_000, max: 60 })
-const limitCode = rateLimit({ key: 'code', windowMs: 60_000, max: 10 })
+// Anything that spends postage, mail or gas is limited; reads are not. The
+// numbers are per minute and per client, and overridable because what is
+// generous for one deployment is a wall for another.
+const perMinute = (name, fallback) => Number(process.env[name] ?? fallback)
+
+const limitAuth = rateLimit({ key: 'auth', windowMs: 60_000, max: perMinute('RATE_AUTH_PER_MIN', 20) })
+const limitSend = rateLimit({ key: 'send', windowMs: 60_000, max: perMinute('RATE_SEND_PER_MIN', 10) })
+const limitSetup = rateLimit({ key: 'setup', windowMs: 60_000, max: perMinute('RATE_SETUP_PER_MIN', 60) })
+const limitCode = rateLimit({ key: 'code', windowMs: 60_000, max: perMinute('RATE_CODE_PER_MIN', 10) })
 
 // ---- admin sign-in ----
 
@@ -319,23 +323,43 @@ app.post('/api/nonce', limitAuth, (req, res) => {
 // ---- invitations ----
 
 /**
- * Alice invites Bob by email. Requires a name: an invitation is an offer to
- * send, and only a named sender may send.
+ * Who is this email address?
+ *
+ * One question with two answers, because from the sender's side it is one
+ * question. Either the address already has a key — in which case they get the
+ * name and the key to encrypt to, read from the chain — or it does not, and an
+ * invitation goes out instead. The sender does not have to know which case
+ * they are in, and is not told anything about an address that has no account
+ * beyond the fact that an invitation was sent.
+ *
+ * Requires a name: addressing someone is an offer to send, and only a named
+ * sender may send.
  */
-app.post('/api/invite', limitSend, requireSignature, async (req, res) => {
+app.post('/api/recipient', limitSend, requireSignature, async (req, res) => {
   try {
     const sender = await names.reverse(req.pubKey)
-    if (!sender) return res.status(403).json({ error: 'claim a name before inviting anyone' })
+    if (!sender) return res.status(403).json({ error: 'claim a name before sending to anyone' })
 
-    const { toEmail, fromEmail } = req.body
+    const { email, fromEmail } = req.body ?? {}
+    if (!invites.validEmail(email)) return res.status(400).json({ error: 'that is not an email address' })
+
+    const user = await users.byEmailHash(await emailHash(email))
+    if (user?.name) {
+      // The chain is the authority on where to encrypt. Asking it here means a
+      // key rotated on chain is picked up without this server being involved.
+      const record = await names.resolve(user.name)
+      if (record?.pubKey) {
+        return res.json({ known: true, name: record.name, pubKey: record.pubKey })
+      }
+    }
+
     const invite = await invites.create({
-      fromPubKey: req.pubKey, fromName: sender.name, fromEmail, toEmail,
+      fromPubKey: req.pubKey, fromName: sender.name, fromEmail, toEmail: email,
     })
-
     const link = `${publicOrigin(req)}/?invite=${invite.id}#get-started`
-    await mail.invitation({ to: toEmail, fromName: sender.name, link })
+    await mail.invitation({ to: email, fromName: sender.name, link })
 
-    res.json({ id: invite.id, link, status: invite.status })
+    res.json({ known: false, invited: true, id: invite.id, status: invite.status })
   } catch (err) {
     res.status(400).json({ error: err.message })
   }
