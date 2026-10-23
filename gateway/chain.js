@@ -19,16 +19,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export const RPC_URL = process.env.RPC_URL ?? 'https://ethereum-sepolia-rpc.publicnode.com'
 
+/**
+ * Anything whose address depends on which network this is pointed at comes
+ * from the environment. A default here would be right for one chain and
+ * quietly wrong on every other, which is the worst kind of wrong: it fails
+ * late, in a transaction, after money has moved.
+ */
+function required(name, what) {
+  const value = process.env[name]
+  if (!value) throw new Error(`${name} is not set — ${what}. See .env.example.`)
+  return value
+}
+
 /** The ENS registry sits at the same address on every chain it is deployed to. */
 const ENS_REGISTRY = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e'
 
 /**
- * Sepolia's .eth registrar, taken from ENS's own deployment records rather than
- * guessed. An older controller is still deployed and will happily quote prices
- * and accept commitments, but its registrations revert at the bottom of the
- * stack — so the address matters more than it looks.
+ * The .eth registrar controller, per network.
+ *
+ * Worth getting from deployment records rather than guessing: an older
+ * controller is usually still deployed and will happily quote prices and
+ * accept commitments, but its registrations revert at the bottom of the stack.
  */
-export const ETH_CONTROLLER = process.env.ENS_CONTROLLER ?? '0xfb3cE5D01e0f33f41DbB39035dB9745962F1f968'
+export const ETH_CONTROLLER = () => required('ENS_CONTROLLER', 'the .eth registrar controller for this network')
 
 /** Registration parameters, which this controller takes as a single struct. */
 const REGISTRATION_TUPLE = {
@@ -67,8 +80,8 @@ const CONTROLLER_ABI = [
 
 export const YEAR = 31536000n
 
-/** Sepolia's public resolver — where a freshly registered name points. */
-export const PUBLIC_RESOLVER = process.env.ENS_RESOLVER ?? '0x8FADE66B79cC9f707aB26799354482EB93a5B7dD'
+/** The public resolver a freshly registered name points at, per network. */
+export const PUBLIC_RESOLVER = () => required('ENS_RESOLVER', "the public resolver for this network")
 
 
 /**
@@ -186,7 +199,7 @@ export async function nameStatus(name) {
 /** What a name costs to register, straight from the registrar. */
 export async function ensPrice(label, years = 1) {
   const price = await publicClient.readContract({
-    address: ETH_CONTROLLER,
+    address: ETH_CONTROLLER(),
     abi: CONTROLLER_ABI,
     functionName: 'rentPrice',
     args: [label, YEAR * BigInt(years)],
@@ -197,7 +210,7 @@ export async function ensPrice(label, years = 1) {
 
 export async function ensAvailable(label) {
   return publicClient.readContract({
-    address: ETH_CONTROLLER,
+    address: ETH_CONTROLLER(),
     abi: CONTROLLER_ABI,
     functionName: 'available',
     args: [label],
@@ -321,25 +334,25 @@ export async function registerEnsName(privateKey, label, years = 1) {
     owner: account.address,
     duration: YEAR * BigInt(years),
     secret: `0x${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex')}`,
-    resolver: PUBLIC_RESOLVER,
+    resolver: PUBLIC_RESOLVER(),
     data: [],
     reverseRecord: 0,
     referrer: `0x${'00'.repeat(32)}`,
   }
 
   const commitment = await publicClient.readContract({
-    address: ETH_CONTROLLER, abi: CONTROLLER_ABI, functionName: 'makeCommitment', args: [registration],
+    address: ETH_CONTROLLER(), abi: CONTROLLER_ABI, functionName: 'makeCommitment', args: [registration],
   })
 
   const commitHash = await wallet.writeContract({
-    address: ETH_CONTROLLER, abi: CONTROLLER_ABI, functionName: 'commit', args: [commitment],
+    address: ETH_CONTROLLER(), abi: CONTROLLER_ABI, functionName: 'commit', args: [commitment],
   })
   await publicClient.waitForTransactionReceipt({ hash: commitHash })
 
   // The registrar refuses a reveal that comes too soon; a little margin on top
   // of the stated minimum costs nothing and avoids a wasted registration fee.
   const minAge = await publicClient
-    .readContract({ address: ETH_CONTROLLER, abi: CONTROLLER_ABI, functionName: 'minCommitmentAge' })
+    .readContract({ address: ETH_CONTROLLER(), abi: CONTROLLER_ABI, functionName: 'minCommitmentAge' })
     .catch(() => 60n)
   await new Promise((r) => setTimeout(r, (Number(minAge) + 5) * 1000))
 
@@ -350,12 +363,12 @@ export async function registerEnsName(privateKey, label, years = 1) {
   // Simulate first: a revert here is free, whereas a failed registration
   // transaction costs gas and leaves the operator guessing.
   await publicClient.simulateContract({
-    address: ETH_CONTROLLER, abi: CONTROLLER_ABI, functionName: 'register',
+    address: ETH_CONTROLLER(), abi: CONTROLLER_ABI, functionName: 'register',
     args: [registration], value, account: account.address,
   })
 
   const registerHash = await wallet.writeContract({
-    address: ETH_CONTROLLER, abi: CONTROLLER_ABI, functionName: 'register',
+    address: ETH_CONTROLLER(), abi: CONTROLLER_ABI, functionName: 'register',
     args: [registration], value,
   })
   const receipt = await publicClient.waitForTransactionReceipt({ hash: registerHash })
@@ -392,7 +405,7 @@ export async function registrationAvailable() {
   }]
   try {
     const authorised = await publicClient.readContract({
-      address: BASE_REGISTRAR, abi: CONTROLLERS_ABI, functionName: 'controllers', args: [ETH_CONTROLLER],
+      address: BASE_REGISTRAR, abi: CONTROLLERS_ABI, functionName: 'controllers', args: [ETH_CONTROLLER()],
     })
     return {
       available: authorised,

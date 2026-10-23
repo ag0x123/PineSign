@@ -24,11 +24,13 @@ const APP_ORIGINS = need('APP_ORIGINS', 'Origins allowed to drive the sign-in pa
   .split(',')
   .map((o) => o.trim().replace(/\/$/, ''))
   .filter(Boolean)
+const BZZ_TOKEN = need('BZZ_TOKEN', 'The BZZ contract on the chain the Bee node is funded from')
 
 const define = {
   __PINESIGN_GATEWAY__: JSON.stringify(GATEWAY),
   __PINESIGN_SIGNIN_URL__: JSON.stringify(SIGNIN_URL.replace(/\/$/, '') + '/'),
   __PINESIGN_APP_ORIGINS__: JSON.stringify(APP_ORIGINS),
+  __PINESIGN_BZZ_TOKEN__: JSON.stringify(BZZ_TOKEN),
 }
 
 const targets = [

@@ -192,7 +192,7 @@ export async function status() {
  */
 export async function chooseName(name) {
   const clean = String(name ?? '').trim().toLowerCase()
-  if (!/^[a-z0-9-]{3,}\.eth$/.test(clean)) throw new Error('expected a name like pinesign.eth')
+  if (!/^[a-z0-9-]{3,}\.eth$/.test(clean)) throw new Error('expected a name like example.eth')
 
   const c = await load()
   if (c.nameRegistered) {

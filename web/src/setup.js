@@ -9,8 +9,12 @@ import {
   walletPresent, walletName, send as sendFromWallet, connect, signMessage, sendXdai, sendToken,
 } from './wallet.js'
 
-/** BZZ on Gnosis. Sixteen decimals, not eighteen. */
-const BZZ_TOKEN = '0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da'
+/**
+ * BZZ, on whichever chain the Bee node is funded from. Sixteen decimals, not
+ * eighteen. The address is per chain, so it is compiled in from .env rather
+ * than written here — see BZZ_TOKEN in .env.example.
+ */
+const BZZ_TOKEN = __PINESIGN_BZZ_TOKEN__
 const BZZ_DECIMALS = 16n
 
 const el = (id) => document.getElementById(id)

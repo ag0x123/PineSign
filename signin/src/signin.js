@@ -4,7 +4,7 @@
  * This page is static, published to Swarm, and served from its own origin. It
  * is the only place the user's private key ever exists.
  *
- * Why its own origin: a passkey scoped to `id.pinesign.xyz` can be asserted by
+ * Why its own origin: a passkey scoped to `id.example.com` can be asserted by
  * that host and anything beneath it, and by nothing above it. So this page can
  * derive the key, and the lander on the apex — which the gateway serves, and
  * could in principle serve something else — cannot.
