@@ -4,3 +4,12 @@ test = "test"
 out = "out"
 libs = ["lib"]
 solc_version = "0.8.24"
+# The delivery struct has more fields than the legacy pipeline can keep on the
+# stack. via-ir handles it, and the optimizer is wanted anyway for a contract
+# whose whole cost argument is per-delivery gas.
+via_ir = true
+optimizer = true
+optimizer_runs = 20000
+
+[rpc_endpoints]
+sepolia = "${RPC_URL}"
