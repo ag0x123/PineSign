@@ -41,25 +41,21 @@
       files, without asking anyone to trust the service in the middle.
     </p>
 
-    <h2 id="keys">Two keys, two jobs</h2>
-    <p>Every user ends up with two distinct keys, which is deliberate.</p>
-    <h3>The wallet key (Circle)</h3>
+    <h2 id="keys">One key, derived from your passkey</h2>
     <p>
-      Created when you sign in with Google. It is a multi-party computation wallet: the
-      key is never assembled in one place, not even in your browser, and never on our
-      server. It is your identity — it owns your name and calls the receipt contract. It
-      does no encryption, because an MPC key cannot perform the key agreement encryption
-      needs.
-    </p>
-    <h3>The encryption key (extension)</h3>
-    <p>
-      Generated locally the first time you open the extension, and stored only there. Web
-      pages never receive it; they ask the extension to act and get back a result. This
-      key does the encrypting, the decrypting, and signs for what you send and receive.
+      Signing in takes an emailed code and then your passkey. The passkey's PRF extension
+      returns a secret that only that passkey can produce, and the browser stretches it
+      with HKDF into a secp256k1 private key.
     </p>
     <p>
-      The name binds them: your wallet owns <code>alice.pinesign.eth</code>, and your
-      extension's public key is published in its records.
+      That key is never stored and never sent. It exists in the page for as long as you
+      are signed in, and signing in again on another machine derives the very same key
+      from the very same passkey. It does the encrypting, the decrypting, and signs for
+      what you send and receive.
+    </p>
+    <p>
+      The name binds it to you: your public key is published in the records of
+      <code>alice.pinesign.eth</code>, which is what other people encrypt to.
     </p>
 
     <h2 id="send">Sending</h2>
@@ -85,12 +81,12 @@
     <p>
       The recipient opens a link naming them specifically. Anyone else who opens it is
       told the file is not theirs, and could not decrypt it regardless. The page fetches
-      the ciphertext and hands it to the extension, which derives the same shared secret,
-      decrypts, and checks the result against the hash the sender committed to.
+      the ciphertext, derives the same shared secret, decrypts, and checks the result
+      against the hash the sender committed to.
     </p>
     <p>
-      Decryption and signing the receipt are a single operation inside the extension. A
-      page cannot take the file and then decline to sign for it.
+      Decryption and signing the receipt are a single operation. A page cannot take the
+      file and then decline to sign for it.
     </p>
 
     <h2 id="receipt">What the receipt proves</h2>

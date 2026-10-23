@@ -73,9 +73,9 @@
       <div class="col">
         <div class="col-head sender">The sender</div>
         <ol class="flow">
-          <li><strong>Sign in</strong><span>Google gives you an account and a wallet whose key only you hold.</span></li>
+          <li><strong>Sign in</strong><span>An email code and your passkey. Your key is derived in the browser and never leaves it.</span></li>
           <li><strong>Take a name</strong><span>You become <code>alice.pinesign.eth</code>. Your encryption key is published in its records.</span></li>
-          <li><strong>Pick a file</strong><span>The extension encrypts it on your machine, addressed to the recipient's key.</span></li>
+          <li><strong>Pick a file</strong><span>It is encrypted on your machine, addressed to the recipient's key.</span></li>
           <li><strong>Send the link</strong><span>Only ciphertext leaves your computer. You have already signed for what you sent.</span></li>
         </ol>
       </div>
@@ -153,7 +153,7 @@
     <button class="modal-x" data-close-onboard aria-label="Close">×</button>
 
     <div class="section-pre">Get started</div>
-    <h2 class="modal-title">Three things, once.</h2>
+    <h2 class="modal-title">Two things, once.</h2>
 
     <div class="tip" id="invite-banner" hidden>
       <strong id="invite-from">Someone</strong> wants to send you a file. Finish these steps
@@ -161,26 +161,11 @@
     </div>
 
     <ol class="setup-steps">
-      <li id="s-account" class="todo">
-        <div class="marker"></div>
-        <div class="body">
-          <h3>An account</h3>
-          <p class="hint" id="account-hint">Sign in with Google. Circle creates a wallet only you hold the key to.</p>
-          <code class="key" id="wallet" hidden></code>
-          <div class="row"><button class="primary" id="signin">Sign in with Google</button></div>
-          <p class="status" id="signin-status"></p>
-        </div>
-      </li>
-
-      <li id="s-extension" class="todo">
+      <li id="s-key" class="todo">
         <div class="marker"></div>
         <div class="body">
           <h3>Your key</h3>
-          <p class="hint" id="extension-hint">Checking…</p>
-          <div id="extension-install" hidden>
-            <a class="ghost" href="/pinesign-extension.zip" style="display:inline-block;text-decoration:none">Download the extension</a>
-            <p class="hint" style="margin-top:8px">Desktop Chrome. Unzip → chrome://extensions → Developer mode → Load unpacked.</p>
-          </div>
+          <p class="hint" id="key-hint">Checking…</p>
           <code class="key" id="enc-key" hidden></code>
         </div>
       </li>
@@ -199,11 +184,6 @@
             <div class="row"><button class="primary" id="claim" disabled>Claim it</button></div>
           </div>
           <code class="key" id="your-name" hidden></code>
-          <div class="tip" id="rebind" hidden>
-            This name is bound to a different key than the one here now — probably you
-            claimed it before installing the extension. Move it, so the extension can send.
-            <div class="row"><button class="primary" id="rebind-btn">Use this key for the name</button></div>
-          </div>
           <p class="status" id="name-status"></p>
         </div>
       </li>
@@ -228,7 +208,7 @@
       </div>
 
       <p class="hint" style="margin-top:18px">
-        Already know their name? Open the extension and send to it directly.
+        Already know their name? Send to it directly from the app.
       </p>
     </div>
   </div>

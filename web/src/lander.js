@@ -20,5 +20,5 @@ addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal()
 })
 
-// Coming back from Google, or already signed in: show the modal where they left off.
+// Sent here to sign up: open the modal straight away.
 resumeIfReturning()

@@ -1,16 +1,15 @@
 /**
- * Gateway client, shared by the extension and the claim page.
+ * Gateway client, shared by every page.
  *
  * It never handles a private key. Anything that needs signing goes through a
- * `signer`, which is a local keypair inside the extension and a message to the
- * extension everywhere else — so the same code works on a page that is not
- * allowed to know the key.
+ * `signer`, so the gateway learns who is asking without the key ever leaving
+ * the page that derived it.
  */
 
 import { sha256 } from '@noble/hashes/sha256'
 import { sign, toHex } from './crypto.js'
 
-/** Signer backed by a keypair in this context. Extension-side only. */
+/** Signer backed by the key this page derived. */
 export function localSigner(identity) {
   return {
     publicKeyHex: identity.publicKeyHex,
@@ -74,11 +73,10 @@ export class Gateway {
   // ---- names ----
 
   /** Claim a name and publish an encryption key under it. */
-  async registerName(signer, label, userToken, inviteId = null) {
+  async registerName(signer, label, inviteId = null) {
     return this.#post('/api/name/register', {
       ...(await this.#auth(signer)),
       label,
-      userToken,
       inviteId,
     })
   }

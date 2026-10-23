@@ -1,13 +1,13 @@
 /**
  * Claim page.
  *
- * This page holds no key and can read no file. It fetches ciphertext, hands it
- * to the extension, and gets back a plaintext and a signature — the private key
- * never enters the page, so nothing here could leak it.
+ * Fetches ciphertext, decrypts it with the recipient's own key and signs the
+ * receipt in one step, so the page cannot take the file and then decline to
+ * sign for it.
  */
 
 import { Gateway } from '../../shared/client.js'
-import { keyMode, identity as getIdentity, openTransfer, signer } from '../../shared/keysource.js'
+import { identity as getIdentity, openTransfer, signer } from '../../shared/keysource.js'
 
 const el = (id) => document.getElementById(id)
 const gateway = new Gateway(location.origin)
@@ -45,7 +45,6 @@ function showReceipt(claim) {
 async function load() {
   if (!id) return subtitle('No transfer in this link.', '#ff9c7a')
 
-  const mode = await keyMode()
   identity = await getIdentity()
   const named = await gateway.reverseName(identity.publicKey)
   el('pubkey').textContent = named ? named.name : identity.publicKey
@@ -68,17 +67,8 @@ async function load() {
     return subtitle('This transfer expired. The file is gone.', '#ff9c7a')
   }
 
-  // The sender may have insisted on the extension, so that no code served by
-  // this site ever handles the key. In that case a page-held key is refused.
-  if (transfer.requireExtension && mode !== 'extension') {
-    el('install-panel').hidden = false
-    el('identity-panel').hidden = true
-    return subtitle('The sender requires the extension for this file.', '#ff9c7a')
-  }
-
-  el('key-mode').textContent = mode === 'extension'
-    ? 'Your key is in the extension. Nothing this page loads can reach it.'
-    : 'Your key is held in this browser. Private in use — but you are trusting the code this page served you.'
+  el('key-mode').textContent =
+    'Derived in this browser from your passkey. It is never stored and never sent.'
 
   // The recipient is named in the transfer itself, so a link alone opens nothing.
   if (transfer.recipientPubKey !== identity.publicKey) {
@@ -103,9 +93,9 @@ el('accept').addEventListener('click', async () => {
     say('Fetching the encrypted file…')
     const blob = await gateway.blob(id)
 
-    // Decryption and the receipt are one step inside the extension: the page
-    // cannot take the file and then decline to sign for it.
-    say('Opening it in the extension…')
+    // Decryption and the receipt are one step: the page cannot take the file
+    // and then decline to sign for it.
+    say('Decrypting…')
     const opened = await openTransfer({
       ciphertext: Array.from(blob),
       senderPubKey: transfer.senderPubKey,

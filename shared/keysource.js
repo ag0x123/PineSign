@@ -1,52 +1,30 @@
 /**
- * Where the user's key lives.
+ * Where the user's key lives: in this browser tab, and nowhere else.
  *
- * Two options, chosen by the user and detected here:
- *
- *   - the extension: installed once, never altered by any page. The server
- *     cannot touch the key even by serving bad code. Trustless, desktop only.
- *   - this page: the key sits in the browser's storage and the code that uses
- *     it arrives from the server on every load. Private in operation, but the
- *     user is trusting the code they were sent today. Works anywhere.
- *
- * Callers get the same interface either way, so nothing above this file needs
- * to know which was chosen.
+ * The key is derived from the passkey when the user signs in, held in memory
+ * for as long as the page is open, and never written to storage or sent over
+ * the wire. Callers ask for an identity or a signer and get one; none of them
+ * needs to know how it was produced.
  */
 
-import * as bridge from './bridge.js'
-import { getOrCreateIdentity } from './identity.js'
+import { getIdentity } from './identity.js'
 import { localSigner } from './client.js'
 import {
-  deriveSharedKey, encrypt, decrypt, hashPlaintext, transferDigest, sign, toHex, fromHex, keccak256,
+  deriveSharedKey, decrypt, hashPlaintext, transferDigest, sign, toHex, fromHex, keccak256,
 } from './crypto.js'
 
-let mode = null
-
-/** 'extension' or 'page'. Decided once per page load. */
-export async function keyMode() {
-  if (mode) return mode
-  mode = (await bridge.extensionPresent()) ? 'extension' : 'page'
-  return mode
-}
-
 export async function identity() {
-  if ((await keyMode()) === 'extension') return bridge.getIdentity()
-  const id = await getOrCreateIdentity()
+  const id = await getIdentity()
   return { publicKey: id.publicKeyHex, address: id.address }
 }
 
 export async function signer() {
-  if ((await keyMode()) === 'extension') return bridge.bridgeSigner()
-  return localSigner(await getOrCreateIdentity())
+  return localSigner(await getIdentity())
 }
 
-/** Decrypt a transfer and sign its receipt — one step, whichever key is used. */
+/** Decrypt a transfer and sign its receipt — one step, so the key stays here. */
 export async function openTransfer({ ciphertext, senderPubKey, expectedCommitment }) {
-  if ((await keyMode()) === 'extension') {
-    return bridge.openTransfer({ ciphertext: Array.from(ciphertext), senderPubKey, expectedCommitment })
-  }
-
-  const id = await getOrCreateIdentity()
+  const id = await getIdentity()
   const sharedKey = deriveSharedKey(id.privateKey, fromHex(senderPubKey))
   const plaintext = decrypt(Uint8Array.from(ciphertext), sharedKey)
 

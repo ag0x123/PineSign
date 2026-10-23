@@ -49,7 +49,7 @@ export function invitation({ to, fromName, link }) {
       '',
       `Accept here: ${link}`,
       '',
-      'You will sign in with Google and pick a name. That takes about a minute.',
+      'You will sign in with an email code and your passkey, then pick a name. That takes about a minute.',
     ].join('\n'),
   })
 }
@@ -61,7 +61,7 @@ export function accepted({ to, recipientName, link }) {
     text: [
       `${recipientName} has accepted your invitation and is ready to receive.`,
       '',
-      `Open the PineSign extension and send to: ${recipientName}`,
+      `Send to: ${recipientName}`,
       '',
       `Or start from here: ${link}`,
     ].join('\n'),

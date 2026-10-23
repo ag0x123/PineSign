@@ -6,7 +6,7 @@
  * after every other module had already captured its configuration.
  *
  * PINESIGN_SKIP_ENV_FILE exists for the tests, which exercise the gateway in
- * its unconfigured state: no Circle, no chain, no credentials.
+ * its unconfigured state: no chain, no mail, no credentials.
  */
 
 if (!process.env.PINESIGN_SKIP_ENV_FILE) {

@@ -32,8 +32,18 @@ export function publicKeyFrom(privateKey) {
 
 /** Ethereum address, for the receipt contract. Derived from the uncompressed key. */
 export function addressFrom(privateKey) {
-  const uncompressed = secp256k1.getPublicKey(privateKey, false).slice(1) // drop 0x04
-  return '0x' + toHex(keccak_256(uncompressed).slice(-20))
+  return addressFromPublicKey(secp256k1.getPublicKey(privateKey, false))
+}
+
+/**
+ * The same address, for a key we were handed rather than one we hold. The
+ * gateway derives a user's address from their published key instead of taking
+ * an address on trust — a page can claim any address, but it cannot claim a
+ * key it has no signature for.
+ */
+export function addressFromPublicKey(publicKey) {
+  const point = secp256k1.ProjectivePoint.fromHex(asBytes(publicKey))
+  return '0x' + toHex(keccak_256(point.toRawBytes(false).slice(1)).slice(-20))
 }
 
 // ---------- shared secret ----------

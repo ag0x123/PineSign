@@ -2,7 +2,7 @@
  * Rate limiting and input hygiene.
  *
  * On a public address the expensive endpoints are the ones that spend something
- * the server owns: Circle quota, postage, gas. None of them should be reachable
+ * the server owns: postage, mail, gas. None of them should be reachable
  * at machine speed by anyone who finds the domain.
  *
  * Deliberately in-memory: a hackathon server does not need shared state, and a

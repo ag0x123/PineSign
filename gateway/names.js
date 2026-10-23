@@ -65,13 +65,10 @@ export async function register(label, { pubKey, address }) {
   const name = fullName(label)
   const existing = all[name]
 
-  // A name belongs to a wallet, not to a key. The same wallet may publish a
-  // new key under it — typically when its owner installs the extension after
-  // claiming on the page, and the key that matters is now the extension's.
-  if (existing && existing.pubKey !== pubKey) {
-    const sameOwner = address && existing.address && existing.address.toLowerCase() === address.toLowerCase()
-    if (!sameOwner) throw new Error('that name is taken')
-  }
+  // A name is bound to one key for good. The key is derived from the passkey,
+  // so the same person signing in again arrives with the same key — and anyone
+  // else arrives with a different one and is turned away.
+  if (existing && existing.pubKey !== pubKey) throw new Error('that name is taken')
 
   all[name] = {
     name,

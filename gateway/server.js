@@ -15,7 +15,6 @@ import * as store from './store.js'
 import * as names from './names.js'
 import * as setup from './setup.js'
 import * as chain from './chain.js'
-import * as circle from './circle.js'
 import * as admin from './admin.js'
 import { rateLimit, requireHexParam } from './limits.js'
 import * as invites from './invites.js'
@@ -23,7 +22,7 @@ import * as mail from './mail.js'
 import * as ens from './ens.js'
 import { keccak256, toHex as viemHex } from 'viem'
 import { issueNonce, requireSignature } from './auth.js'
-import { transferDigest, verify, fromHex, toHex } from '../shared/crypto.js'
+import { transferDigest, verify, fromHex, toHex, addressFromPublicKey } from '../shared/crypto.js'
 import { randomBytes } from 'node:crypto'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -56,12 +55,11 @@ app.set('trust proxy', 1)
 app.use(express.json({ limit: '64mb' }))
 
 app.use((req, res, next) => {
-  // The extension is a distinct origin and must be able to reach the gateway.
-  // Chrome sends chrome-extension:// as the origin; everything else is only
-  // allowed to read, which is what the claim page needs and no more.
+  // The sign-in page is served from its own origin and must be able to reach
+  // the gateway; a request with no origin at all is a plain fetch, not a page.
   const origin = req.get('origin')
-  if (origin?.startsWith('chrome-extension://') || origin === undefined) {
-    res.set('Access-Control-Allow-Origin', origin ?? '*')
+  if (origin === undefined) {
+    res.set('Access-Control-Allow-Origin', '*')
   } else {
     res.set('Access-Control-Allow-Origin', origin)
     res.set('Vary', 'Origin')
@@ -76,9 +74,8 @@ app.use((req, res, next) => {
   next()
 })
 
-// Anything that spends Circle quota, postage or gas is limited; reads are not.
+// Anything that spends postage, mail or gas is limited; reads are not.
 const limitAuth = rateLimit({ key: 'auth', windowMs: 60_000, max: 20 })
-const limitCircle = rateLimit({ key: 'circle', windowMs: 60_000, max: 20 })
 const limitSend = rateLimit({ key: 'send', windowMs: 60_000, max: 10 })
 const limitSetup = rateLimit({ key: 'setup', windowMs: 60_000, max: 60 })
 
@@ -222,43 +219,6 @@ app.post('/api/nonce', limitAuth, (req, res) => {
   res.json({ nonce: issueNonce(pubKey) })
 })
 
-// ---- circle wallets ----
-
-/** Public ids the sign-in flow needs. Never the API key. */
-app.get('/api/circle/config', (_req, res) => res.json(circle.publicConfig()))
-
-/** Trade the browser's device id for tokens the SDK can sign in with. */
-app.post('/api/circle/device-token', limitCircle, async (req, res) => {
-  try {
-    const { deviceId } = req.body ?? {}
-    if (!deviceId) return res.status(400).json({ error: 'deviceId required' })
-    res.json(await circle.createDeviceToken(deviceId))
-  } catch (err) {
-    res.status(502).json({ error: err.message })
-  }
-})
-
-/** Provision the wallet once Google has returned. */
-app.post('/api/circle/initialize', limitCircle, async (req, res) => {
-  try {
-    const { userToken } = req.body ?? {}
-    if (!userToken) return res.status(400).json({ error: 'userToken required' })
-    res.json(await circle.initializeUser(userToken))
-  } catch (err) {
-    res.status(502).json({ error: err.message })
-  }
-})
-
-app.post('/api/circle/wallets', limitCircle, async (req, res) => {
-  try {
-    const { userToken } = req.body ?? {}
-    if (!userToken) return res.status(400).json({ error: 'userToken required' })
-    res.json(await circle.listWallets(userToken))
-  } catch (err) {
-    res.status(502).json({ error: err.message })
-  }
-})
-
 // ---- invitations ----
 
 /**
@@ -311,27 +271,17 @@ app.get('/api/name/available/:label', async (req, res) => {
 /**
  * Claim a name and publish an encryption key under it.
  *
- * Two proofs are required, because the name binds two different things: the
- * extension signs, which proves the encryption key is theirs, and the Circle
- * user token proves the wallet is theirs. The wallet address is read back from
- * Circle rather than accepted from the browser — a page could claim any address.
+ * One proof is enough: the signature over the nonce shows the key is theirs,
+ * and the address is derived from that same key rather than accepted from the
+ * browser — a page could claim any address, but not a key it cannot sign for.
  */
 app.post('/api/name/register', limitSend, requireSignature, async (req, res) => {
   try {
-    const { label, userToken } = req.body
-
-    let address = null
-    if (userToken) {
-      const { wallets } = await circle.listWallets(userToken)
-      address = wallets?.[0]?.address ?? null
-      if (!address) return res.status(400).json({ error: 'that account has no wallet yet' })
-    } else if (circle.configured) {
-      return res.status(401).json({ error: 'sign in before claiming a name' })
-    }
+    const { label } = req.body
 
     const record = await names.register(String(label ?? '').toLowerCase(), {
       pubKey: req.pubKey,
-      address,
+      address: addressFromPublicKey(req.pubKey),
     })
 
     // Arrived via an invitation: close the loop and tell the sender to proceed.
@@ -386,7 +336,7 @@ app.get('/api/names', setup.requireSetupToken, async (_req, res) => res.json(awa
  */
 app.post('/api/send', limitSend, requireSignature, async (req, res) => {
   try {
-    const { recipientPubKey, plaintextHash, senderSignature, filename, ciphertext, requireExtension } = req.body
+    const { recipientPubKey, plaintextHash, senderSignature, filename, ciphertext } = req.body
     if (!recipientPubKey || !plaintextHash || !senderSignature || !ciphertext) {
       return res.status(400).json({ error: 'recipientPubKey, plaintextHash, senderSignature and ciphertext required' })
     }
@@ -426,9 +376,6 @@ app.post('/api/send', limitSend, requireSignature, async (req, res) => {
       filename: filename ?? 'file',
       size: blob.length,
       digest: toHex(digest),
-      // Alice's call: whether the recipient may open this in a plain browser,
-      // or must use the extension so no served code ever touches the key.
-      requireExtension: Boolean(requireExtension),
     })
 
     const claimUrl = `${publicOrigin(req)}/claim.html?id=${id}`
@@ -488,7 +435,6 @@ app.get('/api/transfer/:id', requireHexParam('id', { length: 32 }), async (req, 
     createdAt: t.createdAt,
     expiresAt: t.expiresAt,
     expired: Boolean(t.expired),
-    requireExtension: Boolean(t.requireExtension),
     claim: t.claim,
     attestation: `${t.id}.tx.${names.getParent()}`,
   })
@@ -618,9 +564,6 @@ app.get('/api/attestation/:id', requireHexParam('id', { length: 32 }), async (re
 })
 
 app.get('/api/transfers', setup.requireSetupToken, async (_req, res) => res.json(await store.list()))
-
-// Clean URL for the demo video page, for the submission form.
-app.get('/demovideo', (_req, res) => res.sendFile(path.join(__dirname, '..', 'web', 'demovideo.html')))
 
 // Bundles change on every deploy. Served with no-cache, the browser revalidates
 // each load (cheap, ETag) instead of running last week's code from its cache.
