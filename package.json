@@ -12,7 +12,8 @@
     "stop": "docker compose down",
     "bee:logs": "docker compose logs -f bee",
     "publish-page": "node scripts/publish-page.mjs",
-    "check:p256": "node scripts/p256-precompile.mjs"
+    "check:p256": "node scripts/p256-precompile.mjs",
+    "check:accept": "node scripts/accept-onchain.mjs"
   },
   "dependencies": {
     "@ethersphere/bee-js": "^11.1.1",
