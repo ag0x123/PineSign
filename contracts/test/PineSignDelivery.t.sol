@@ -794,3 +794,132 @@ contract PineSignDeliveryDigestTest is Test {
         assertEq(keccak256(abi.encode(d.releasedKey)), d.releaseCommitment);
     }
 }
+
+/**
+ * Releasing without a funded wallet.
+ *
+ * The default releaser is the sender, whose key is derived from their passkey
+ * and has no ether. So the signature path is not a convenience — it is what
+ * makes the stated default possible at all.
+ */
+contract PineSignDeliveryReleaseSignedTest is Test {
+    DeliveryHarness delivery;
+
+    uint256 aliceKey = 0xA11CE;
+    address alice;
+    address relayer = address(0xDEAD);
+    bytes32 constant B = keccak256("the half the sender holds back");
+    bytes32 rpIdHash = sha256("id.example.com");
+    bytes32 constant ORIGIN_HASH = keccak256("https://v1.id.example.com");
+    PineSignDelivery.SendParams baseParams;
+    bytes32 id;
+
+    function setUp() public {
+        alice = vm.addr(aliceKey);
+        bytes32[] memory origins = new bytes32[](1);
+        origins[0] = ORIGIN_HASH;
+        delivery = new DeliveryHarness(rpIdHash, origins);
+        vm.warp(1_700_000_000);
+        baseParams = PineSignDelivery.SendParams({
+            releaser: alice, // the sender releases, which is the default
+            passkeyX: bytes32(uint256(0x1111)),
+            passkeyY: bytes32(uint256(0x2222)),
+            pkBX: bytes32(uint256(0x3333)),
+            pkBOdd: false,
+            ephemeralX: bytes32(uint256(0x4444)),
+            ephemeralOdd: true,
+            swarmRef: keccak256("swarm"),
+            ciphertextHash: keccak256("C"),
+            plaintextCommitment: keccak256(abi.encode(keccak256("salt||F"))),
+            releaseCommitment: keccak256(abi.encode(B)),
+            descriptionHash: keccak256("an invoice"),
+            acceptBy: uint64(block.timestamp + 1 days),
+            releaseBy: uint64(block.timestamp + 2 days)
+        });
+        PineSignDelivery.SendParams memory p = baseParams;
+        vm.prank(alice);
+        id = delivery.send(p);
+        delivery.markAccepted(id);
+    }
+
+    function sign(uint256 key, bytes32 digest) internal pure returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_anyoneMayCarryTheReleasersSignature() public {
+        bytes memory signature = sign(aliceKey, delivery.releaseDigest(id, B));
+
+        // Alice holds no ether and never submits anything herself.
+        vm.prank(relayer);
+        delivery.releaseSigned(id, B, signature);
+
+        assertEq(uint256(delivery.stateOf(id)), uint256(PineSignDelivery.State.Released));
+        assertEq(delivery.get(id).releasedKey, B);
+    }
+
+    function test_aRelayerCannotChangeWhichHalfIsReleased() public {
+        bytes memory signature = sign(aliceKey, delivery.releaseDigest(id, B));
+        vm.prank(relayer);
+        vm.expectRevert(PineSignDelivery.NotReleaser.selector);
+        // A different half means a different digest, so the signature recovers
+        // to somebody who is not the releaser.
+        delivery.releaseSigned(id, keccak256("another half"), signature);
+    }
+
+    function test_somebodyElsesSignatureIsRefused() public {
+        bytes memory signature = sign(0xB0B, delivery.releaseDigest(id, B));
+        vm.expectRevert(PineSignDelivery.NotReleaser.selector);
+        delivery.releaseSigned(id, B, signature);
+    }
+
+    function test_aSignatureForAnotherTransferIsRefused() public {
+        bytes memory signature = sign(aliceKey, delivery.releaseDigest(keccak256("elsewhere"), B));
+        vm.expectRevert(PineSignDelivery.NotReleaser.selector);
+        delivery.releaseSigned(id, B, signature);
+    }
+
+    /// The digest is chain- and contract-bound, so an authorisation cannot be
+    /// lifted from a testnet or from another deployment.
+    function test_theReleaseDigestIsBoundToTheChain() public {
+        bytes32 digest = delivery.releaseDigest(id, B);
+        vm.chainId(block.chainid + 1);
+        assertTrue(delivery.releaseDigest(id, B) != digest);
+    }
+
+    function test_releasingTwiceHasNowhereToLand() public {
+        bytes memory signature = sign(aliceKey, delivery.releaseDigest(id, B));
+        delivery.releaseSigned(id, B, signature);
+        vm.expectRevert(
+            abi.encodeWithSelector(PineSignDelivery.WrongState.selector, PineSignDelivery.State.Released)
+        );
+        delivery.releaseSigned(id, B, signature);
+    }
+
+    function test_aMalformedSignatureIsRefused() public {
+        vm.expectRevert(PineSignDelivery.BadSignature.selector);
+        delivery.releaseSigned(id, B, hex"1234");
+    }
+
+    function test_aZeroSignatureIsRefused() public {
+        vm.expectRevert(PineSignDelivery.BadSignature.selector);
+        delivery.releaseSigned(id, B, new bytes(65));
+    }
+
+    /// The other encoding of the same signature is refused rather than treated
+    /// as a second valid authorisation.
+    function test_aHighSSignatureIsRefused() public {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(aliceKey, delivery.releaseDigest(id, B));
+        uint256 flipped =
+            0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141 - uint256(s);
+        vm.expectRevert(PineSignDelivery.BadSignature.selector);
+        delivery.releaseSigned(id, B, abi.encodePacked(r, bytes32(flipped), v == 27 ? 28 : 27));
+    }
+
+    /// And the funded path still works, for a releaser who does hold ether.
+    function test_aFundedReleaserCanStillCallDirectly() public {
+        vm.prank(alice);
+        delivery.release(id, B);
+        assertEq(uint256(delivery.stateOf(id)), uint256(PineSignDelivery.State.Released));
+    }
+}

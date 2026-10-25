@@ -16,11 +16,13 @@
 
 import {
   deriveSharedKey, encrypt, decrypt, hashPlaintext, transferDigest, sign,
-  toHex, fromHex, keccak256,
+  signRecoverable, toHex, fromHex, keccak256,
 } from '../../shared/crypto.js'
 import { createAndDerive, derive, bytesToBase64url, NoPrfError } from '../../shared/prf.js'
 import { assertOverDigest } from '../../shared/passkey-sign.js'
-import { inspectDelivery, openDelivery } from '../../shared/keysplit.js'
+import {
+  inspectDelivery, openDelivery, prepareDelivery, openSenderHalf,
+} from '../../shared/keysplit.js'
 import { sha256 } from '@noble/hashes/sha256'
 
 const GATEWAY = __PINESIGN_GATEWAY__
@@ -266,6 +268,58 @@ const methods = {
    */
   inspect({ delivery, ciphertext }) {
     return inspectDelivery({ secretKey: identity.privateKey, delivery, ciphertext: new Uint8Array(ciphertext) })
+  },
+
+  /**
+   * Build a delivery: encrypt the file, split the key, keep one half.
+   *
+   * Everything that touches a key happens here. The app gets back ciphertext,
+   * an encrypted description, the parameters for the contract, and the
+   * sender's half sealed under the sender's own key — which the gateway can
+   * store and cannot read. It never gets the half itself, so it can neither
+   * release early nor hand the file to somebody who never accepted.
+   */
+  prepareSend({
+    sender, plaintext, description, recipientPublicKey, recipientPasskey,
+    releaser, acceptBy, releaseBy,
+  }) {
+    const prepared = prepareDelivery({
+      sender,
+      plaintext: new Uint8Array(plaintext),
+      description,
+      recipientPublicKey,
+      recipientPasskey,
+      releaser,
+      acceptBy,
+      releaseBy,
+      senderSecretKey: identity.privateKey,
+    })
+    return {
+      transferId: prepared.transferId,
+      params: prepared.params,
+      ciphertext: Array.from(prepared.ciphertext),
+      description: Array.from(prepared.description),
+      keptHalf: Array.from(prepared.keptHalf),
+    }
+  },
+
+  /**
+   * Authorise the release of the sender's half.
+   *
+   * The sealed half comes back from wherever it was stored, is opened with the
+   * sender's key, and the signature is over the contract's own release digest —
+   * so a relayer can carry it and can change nothing about it. The sender needs
+   * no ether for this, which is the only reason they can be the default
+   * releaser at all.
+   */
+  signRelease({ transferId, keptHalf, digest }) {
+    const half = openSenderHalf({
+      secretKey: identity.privateKey,
+      transferId,
+      blob: new Uint8Array(keptHalf),
+    })
+    const signature = signRecoverable(fromHex(digest), identity.privateKey)
+    return { releasedKey: '0x' + toHex(half), signature }
   },
 
   /**

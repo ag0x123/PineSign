@@ -184,6 +184,10 @@ function asBytes(value) {
  * `A` is salted with this, so a sender and a recipient who disagree about it
  * derive different halves and the file simply will not open. The live script
  * checks this function against the contract for exactly that reason.
+ *
+ * Neither `releaseCommitment` nor `descriptionHash` is an input, because both
+ * are things `A` is needed to produce — see the contract, which says the same
+ * at more length. The acceptance digest covers both.
  */
 export function transferId({
   sender,
@@ -195,7 +199,6 @@ export function transferId({
   ephemeralOdd,
   ciphertextHash,
   plaintextCommitment,
-  descriptionHash,
   acceptBy,
   releaseBy,
 }) {
@@ -209,7 +212,6 @@ export function transferId({
     boolWord(ephemeralOdd),
     word(ciphertextHash, 32),
     word(plaintextCommitment, 32),
-    word(descriptionHash, 32),
     numberWord(acceptBy),
     numberWord(releaseBy),
   ]
@@ -337,4 +339,125 @@ export function openDelivery({ secretKey, delivery, ciphertext, releasedKey }) {
   }
 
   return { plaintext: opened.plaintext, plaintextHash: toHex(opened.plaintextHash), salt: opened.salt }
+}
+
+// ---- keeping the sender's half until it is time ----
+
+const KEEP_INFO = encoder.encode('pinesign/v1/keep')
+
+/**
+ * Seal `B` so the sender can get it back later and nobody else can.
+ *
+ * There is a gap between sending and releasing — the recipient has to accept
+ * first — and the page that generated `B` is long closed by then. Something has
+ * to hold it.
+ *
+ * It is sealed under a key derived from the sender's own secret, so whatever
+ * holds the blob cannot read it. That matters because the obvious place to put
+ * it is the gateway, and the gateway also serves the signing page: a gateway
+ * that could read `B` would be a gateway that could release on the sender's
+ * behalf, or hand it to a recipient who never accepted. This way it is a dumb
+ * store, and the only party who can produce `B` is the one who chose it.
+ *
+ * Salted with the transfer id, so one transfer's blob is useless for another.
+ */
+export function sealSenderHalf({ secretKey, transferId, senderHalf }) {
+  const key = hkdf(sha256, asBytes(secretKey), asBytes(transferId), KEEP_INFO, 32)
+  const nonce = randomBytes(12)
+  const sealed = gcm(key, nonce).encrypt(asBytes(senderHalf))
+  const out = new Uint8Array(nonce.length + sealed.length)
+  out.set(nonce, 0)
+  out.set(sealed, nonce.length)
+  return out
+}
+
+export function openSenderHalf({ secretKey, transferId, blob }) {
+  const key = hkdf(sha256, asBytes(secretKey), asBytes(transferId), KEEP_INFO, 32)
+  const bytes = asBytes(blob)
+  const half = gcm(key, bytes.slice(0, 12)).decrypt(bytes.slice(12))
+  if (half.length !== 32) throw new Error('that is not a 32-byte key half')
+  return half
+}
+
+/**
+ * Everything a send needs, computed in one place.
+ *
+ * The order is forced and worth seeing laid out, because it is the only order
+ * that works: `K` is random and independent, so the ciphertext can be made
+ * first; the id is a hash of the ciphertext among other things; `A` is salted
+ * with the id; and `B` is whatever makes the two halves add up. Deriving `A`
+ * any earlier would mean salting it with something that does not exist yet.
+ */
+export function prepareDelivery({
+  sender,
+  plaintext,
+  description,
+  recipientPublicKey,
+  recipientPasskey,
+  releaser,
+  acceptBy,
+  releaseBy,
+  senderSecretKey,
+}) {
+  const eA = ephemeral()
+  const sealed = encryptFile(plaintext)
+
+  const pkB = splitPublicKey(recipientPublicKey)
+  const eSplit = splitPublicKey(eA.publicKey)
+
+  const id = transferId({
+    sender,
+    passkeyX: recipientPasskey.x,
+    passkeyY: recipientPasskey.y,
+    pkBX: pkB.x,
+    pkBOdd: pkB.odd,
+    ephemeralX: eSplit.x,
+    ephemeralOdd: eSplit.odd,
+    ciphertextHash: hash(sealed.ciphertext),
+    plaintextCommitment: commitToWord(sealed.plaintextHash),
+    acceptBy,
+    releaseBy,
+  })
+
+  // The recipient's half, and everything that hangs off it.
+  const recipientKeyHalf = recipientHalf({
+    secretKey: eA.secretKey,
+    theirPublicKey: recipientPublicKey,
+    transferId: id,
+  })
+  const descriptionBlob = encryptDescription(description ?? '', recipientKeyHalf)
+  const senderHalf = xor(sealed.key, recipientKeyHalf)
+
+  // The ephemeral secret has done its only job. Nothing keeps a copy: anyone
+  // who held it could recompute the recipient's half for this transfer and,
+  // with a released sender half, read the file.
+  eA.secretKey.fill(0)
+
+  return {
+    transferId: id,
+    params: {
+      releaser,
+      passkeyX: recipientPasskey.x,
+      passkeyY: recipientPasskey.y,
+      pkBX: pkB.x,
+      pkBOdd: pkB.odd,
+      ephemeralX: eSplit.x,
+      ephemeralOdd: eSplit.odd,
+      // The gateway fills this in once the ciphertext is stored. It is not an
+      // input to the id, so filling it in later changes nothing.
+      swarmRef: null,
+      ciphertextHash: hash(sealed.ciphertext),
+      plaintextCommitment: commitToWord(sealed.plaintextHash),
+      releaseCommitment: commitToWord(senderHalf),
+      descriptionHash: hash(descriptionBlob),
+      acceptBy,
+      releaseBy,
+    },
+    ciphertext: sealed.ciphertext,
+    description: descriptionBlob,
+    /** Sealed to the sender, for the gateway to hold and not read. */
+    keptHalf: sealSenderHalf({ secretKey: senderSecretKey, transferId: id, senderHalf }),
+    /** Returned so a caller can check the arithmetic; not for storing. */
+    senderHalf,
+  }
 }

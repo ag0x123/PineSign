@@ -246,7 +246,6 @@ async function checkTransferId(contract, sender, params) {
     ephemeralOdd: params.ephemeralOdd,
     ciphertextHash: params.ciphertextHash,
     plaintextCommitment: params.plaintextCommitment,
-    descriptionHash: params.descriptionHash,
     acceptBy: params.acceptBy,
     releaseBy: params.releaseBy,
   })

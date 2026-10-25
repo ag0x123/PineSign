@@ -184,6 +184,18 @@ contract PineSignDelivery {
         keccak256(
             "PineSignAccept(bytes32 transferId,bytes32 ciphertextHash,bytes32 plaintextCommitment,bytes32 descriptionHash,bytes32 releaseCommitment,bytes32 swarmRef,address releaser,uint64 acceptBy)"
         );
+    /**
+     * The releaser's signature, so releasing does not require a funded wallet.
+     *
+     * By default the releaser is the sender, and a sender's key here is derived
+     * from their passkey — it has no ether and never will. Requiring
+     * `msg.sender` to be the releaser would therefore have made the default
+     * impossible and quietly pushed every deployment towards a funded service
+     * holding `B` for everyone. Signing instead means the sender authorises one
+     * specific release of one specific half, and anybody can carry it.
+     */
+    bytes32 private constant RELEASE_TYPEHASH =
+        keccak256("PineSignRelease(bytes32 transferId,bytes32 releasedKey)");
     bytes32 private constant NAME_HASH = keccak256("PineSign");
     bytes32 private constant VERSION_HASH = keccak256("1");
 
@@ -207,20 +219,25 @@ contract PineSignDelivery {
     error BadReleaseKey();
     error EmptyField();
     error OriginNotAllowed();
+    error BadSignature();
 
     /**
      * The id is derived from the transfer, never chosen — so no field can be
      * swapped afterwards and no id can be squatted by someone who cannot
      * construct it.
      *
-     * `releaseCommitment` is deliberately *not* in here, and the reason is
-     * worth stating because the omission looks like a gap. The recipient's key
-     * half is `A = HKDF(ECDH(e_A, pk_B), transferId)`, and `B = K XOR A`, so
-     * `keccak(B)` cannot be an input to the id that `A` is derived from
-     * without the definition eating itself. Leaving it out costs nothing: the
-     * same transfer sent twice collides on `AlreadySent`, a fresh send needs a
-     * fresh ephemeral key, and `release` checks `B` against the commitment the
-     * record actually holds.
+     * Two fields are deliberately *not* in here, and both omissions look like
+     * gaps until the derivation is written out. The recipient's key half is
+     * `A = HKDF(ECDH(e_A, pk_B), transferId)`, so nothing `A` is needed to
+     * produce can also be an input to the id:
+     *
+     *   releaseCommitment  is `keccak(B)`, and `B = K XOR A`.
+     *   descriptionHash    is over the description, which is encrypted to `A`.
+     *
+     * Leaving them out costs nothing. The same transfer sent twice collides on
+     * `AlreadySent`, a fresh send needs a fresh ephemeral key, `release`
+     * checks `B` against the commitment the record holds, and the acceptance
+     * digest covers both fields — so the recipient still signs over them.
      */
     function transferId(address sender, SendParams memory p) public pure returns (bytes32) {
         return keccak256(
@@ -234,7 +251,6 @@ contract PineSignDelivery {
                 p.ephemeralOdd,
                 p.ciphertextHash,
                 p.plaintextCommitment,
-                p.descriptionHash,
                 p.acceptBy,
                 p.releaseBy
             )
@@ -355,10 +371,37 @@ contract PineSignDelivery {
      * post a different half and claim to have delivered.
      */
     function release(bytes32 id, bytes32 b) external {
+        _release(id, b, msg.sender);
+    }
+
+    /// The digest a releaser signs to authorise one release, relayed by anyone.
+    function releaseDigest(bytes32 id, bytes32 b) public view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                domainSeparator(),
+                keccak256(abi.encode(RELEASE_TYPEHASH, id, b))
+            )
+        );
+    }
+
+    /**
+     * The same release, carried by someone else.
+     *
+     * The signature names the transfer and the exact half, so a relayer can
+     * choose whether to submit it and nothing else. There is no nonce because
+     * there is nothing to replay: a release moves the state out of `Accepted`
+     * and a second attempt has nowhere to land.
+     */
+    function releaseSigned(bytes32 id, bytes32 b, bytes calldata signature) external {
+        _release(id, b, _recover(releaseDigest(id, b), signature));
+    }
+
+    function _release(bytes32 id, bytes32 b, address releaser) private {
         Delivery storage d = _deliveries[id];
         if (d.state == State.None) revert UnknownTransfer();
         if (d.state != State.Accepted) revert WrongState(d.state);
-        if (msg.sender != d.releaser) revert NotReleaser();
+        if (releaser != d.releaser) revert NotReleaser();
         if (block.timestamp > d.releaseBy) revert ReleaseWindowClosed();
         if (keccak256(abi.encode(b)) != d.releaseCommitment) revert BadReleaseKey();
 
@@ -367,6 +410,30 @@ contract PineSignDelivery {
         d.releasedAt = uint64(block.timestamp);
 
         emit Released(id, b, d.releasedAt);
+    }
+
+    /**
+     * ecrecover, with the two things it will happily get wrong ruled out.
+     *
+     * `s` above half the curve order is the same signature written the other
+     * way round, so accepting both would let a relayer produce a second valid
+     * encoding of an authorisation — harmless here, but it is cheaper to refuse
+     * than to reason about. A recovery that yields the zero address is a
+     * failure, not an address, and must not be compared to anything.
+     */
+    function _recover(bytes32 digest, bytes calldata signature) private pure returns (address) {
+        if (signature.length != 65) revert BadSignature();
+        bytes32 r = bytes32(signature[0:32]);
+        bytes32 s = bytes32(signature[32:64]);
+        uint8 v = uint8(signature[64]);
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) revert BadSignature();
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            revert BadSignature();
+        }
+        address recovered = ecrecover(digest, v, r, s);
+        if (recovered == address(0)) revert BadSignature();
+        return recovered;
     }
 
     /// The sender changes their mind, before anyone has accepted.

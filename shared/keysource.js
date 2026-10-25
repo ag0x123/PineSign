@@ -158,6 +158,30 @@ export function signAccept({ digest, rpId, summary }) {
 }
 
 /**
+ * Build a delivery.
+ *
+ * The app supplies the file and who it is for, and gets back ciphertext, the
+ * contract's parameters, and the sender's key half sealed under the sender's
+ * own key. Never the half itself — so nothing downstream of here can release
+ * early or hand the file to someone who never accepted.
+ */
+export function prepareSend(args) {
+  return call('prepareSend', { ...args, plaintext: Array.from(args.plaintext) })
+}
+
+/**
+ * Authorise a release.
+ *
+ * `digest` must be the contract's own release digest and `keptHalf` the sealed
+ * blob it was stored with. Comes back as a half and a signature that anyone
+ * may carry — the sender needs no ether, which is what lets them be the
+ * releaser rather than some funded service holding everyone's halves.
+ */
+export function signRelease({ transferId, keptHalf, digest }) {
+  return call('signRelease', { transferId, keptHalf: Array.from(keptHalf), digest })
+}
+
+/**
  * Open a released delivery.
  *
  * `releasedKey` is `B`, read from the chain, where it does not exist until the

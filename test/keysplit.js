@@ -11,6 +11,7 @@ import {
   ephemeral, recipientHalf, xor, encryptFile, decryptFile,
   encryptDescription, decryptDescription, transferId, splitPublicKey, joinPublicKey,
   commitToWord, hash, SALT_BYTES, inspectDelivery, openDelivery, halfForDelivery,
+  prepareDelivery, sealSenderHalf, openSenderHalf,
 } from '../shared/keysplit.js'
 import { toHex } from '../shared/crypto.js'
 
@@ -115,7 +116,6 @@ const fields = {
   ephemeralOdd: splitPublicKey(eA.publicKey).odd,
   ciphertextHash: hash(sealed.ciphertext),
   plaintextCommitment: commitToWord(sealed.plaintextHash),
-  descriptionHash: hash(d),
   acceptBy: 1700000000n,
   releaseBy: 1700003600n,
 }
@@ -198,6 +198,84 @@ check(
   'a stranger cannot open it even with B',
   refuses(() => openDelivery({
     secretKey: stranger, delivery, ciphertext: sealed.ciphertext, releasedKey: '0x' + toHex(B),
+  })),
+)
+
+console.log('\nkeeping the sender half')
+// The gateway holds this blob and must not be able to read it.
+const aliceSecret = secp256k1.utils.randomPrivateKey()
+const kept = sealSenderHalf({ secretKey: aliceSecret, transferId: ID, senderHalf: B })
+check('the sealed half is not the half', !same(kept.slice(12, 44), B))
+check('the sender gets it back', same(openSenderHalf({ secretKey: aliceSecret, transferId: ID, blob: kept }), B))
+check(
+  'nobody else does',
+  refuses(() => openSenderHalf({ secretKey: stranger, transferId: ID, blob: kept })),
+)
+check(
+  'and not under another transfer id',
+  refuses(() => openSenderHalf({
+    secretKey: aliceSecret, transferId: '0x' + '99'.repeat(32), blob: kept,
+  })),
+)
+
+console.log('\npreparing a whole delivery')
+const passkey = { x: '0x' + 'aa'.repeat(32), y: '0x' + 'bb'.repeat(32) }
+const senderAddress = '0x' + '0a'.repeat(20)
+const prepared = prepareDelivery({
+  sender: senderAddress,
+  plaintext: file,
+  description: 'one invoice, 40kb',
+  recipientPublicKey: bobPublic,
+  recipientPasskey: passkey,
+  releaser: senderAddress,
+  acceptBy: 1700000000n,
+  releaseBy: 1700003600n,
+  senderSecretKey: aliceSecret,
+})
+
+check('the id matches the params it was built from', prepared.transferId === transferId({
+  sender: senderAddress,
+  passkeyX: passkey.x,
+  passkeyY: passkey.y,
+  pkBX: prepared.params.pkBX,
+  pkBOdd: prepared.params.pkBOdd,
+  ephemeralX: prepared.params.ephemeralX,
+  ephemeralOdd: prepared.params.ephemeralOdd,
+  ciphertextHash: prepared.params.ciphertextHash,
+  plaintextCommitment: prepared.params.plaintextCommitment,
+  acceptBy: 1700000000n,
+  releaseBy: 1700003600n,
+}))
+check('it commits to the half it kept', prepared.params.releaseCommitment === commitToWord(prepared.senderHalf))
+
+// The whole point: the recipient can do everything from the record.
+const record = {
+  transferId: prepared.transferId,
+  ephemeralX: prepared.params.ephemeralX,
+  ephemeralOdd: prepared.params.ephemeralOdd,
+  ciphertextHash: prepared.params.ciphertextHash,
+  plaintextCommitment: prepared.params.plaintextCommitment,
+  description: prepared.description,
+}
+const seen = inspectDelivery({ secretKey: bobSecret, delivery: record, ciphertext: prepared.ciphertext })
+check('the recipient reads the description from the record alone', seen.description === 'one invoice, 40kb')
+
+// This is the bug that a two-pass id would have caused: a description
+// encrypted under one half and read with another, failing silently.
+check('the description is not silently empty', seen.description !== null && seen.description !== '')
+
+const recovered = openSenderHalf({ secretKey: aliceSecret, transferId: prepared.transferId, blob: prepared.keptHalf })
+const finished = openDelivery({
+  secretKey: bobSecret,
+  delivery: record,
+  ciphertext: prepared.ciphertext,
+  releasedKey: '0x' + toHex(recovered),
+})
+check('and opens the file once the kept half is released', same(finished.plaintext, file))
+check(
+  'but not before',
+  refuses(() => openDelivery({
+    secretKey: bobSecret, delivery: record, ciphertext: prepared.ciphertext, releasedKey: null,
   })),
 )
 

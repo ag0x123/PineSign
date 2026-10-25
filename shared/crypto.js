@@ -120,6 +120,27 @@ export function sign(digest, privateKey) {
   return sig.toCompactRawBytes()
 }
 
+/**
+ * A signature `ecrecover` can use: r, s and the recovery byte, 65 bytes.
+ *
+ * The receipt signatures elsewhere in this file are 64 bytes and verified
+ * against a known public key. On chain there is no public key to check
+ * against — only an address — so the recovery bit has to travel with the
+ * signature for the address to be recoverable at all.
+ *
+ * noble normalises `s` to the low half, which is what the contract requires:
+ * the other encoding of the same signature is refused there rather than
+ * accepted as a second valid authorisation.
+ */
+export function signRecoverable(digest, privateKey) {
+  const sig = secp256k1.sign(asBytes(digest), privateKey)
+  const out = new Uint8Array(65)
+  out.set(sig.toCompactRawBytes(), 0)
+  // 27 is the offset ecrecover expects; noble reports the raw bit.
+  out[64] = sig.recovery + 27
+  return '0x' + toHex(out)
+}
+
 export function verify(signature, digest, publicKey) {
   return secp256k1.verify(asBytes(signature), asBytes(digest), asBytes(publicKey))
 }
