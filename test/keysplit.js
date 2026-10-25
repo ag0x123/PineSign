@@ -10,7 +10,7 @@ import { secp256k1 } from '@noble/curves/secp256k1'
 import {
   ephemeral, recipientHalf, xor, encryptFile, decryptFile,
   encryptDescription, decryptDescription, transferId, splitPublicKey, joinPublicKey,
-  commitToWord, hash, SALT_BYTES,
+  commitToWord, hash, SALT_BYTES, inspectDelivery, openDelivery, halfForDelivery,
 } from '../shared/keysplit.js'
 import { toHex } from '../shared/crypto.js'
 
@@ -125,6 +125,81 @@ check('it is deterministic', transferId(fields) === id)
 check('one changed field changes it', transferId({ ...fields, acceptBy: 1700000001n }) !== id)
 check('a changed parity bit changes it', transferId({ ...fields, pkBOdd: !fields.pkBOdd }) !== id)
 check('a wrong-width field is refused', refuses(() => transferId({ ...fields, passkeyX: '0x1234' })))
+
+console.log('\na delivery, from the recipient\'s side')
+// The record as the chain holds it, and the ciphertext as Swarm holds it.
+const eSplit = splitPublicKey(eA.publicKey)
+const delivery = {
+  transferId: ID,
+  ephemeralX: eSplit.x,
+  ephemeralOdd: eSplit.odd,
+  ciphertextHash: hash(sealed.ciphertext),
+  plaintextCommitment: commitToWord(sealed.plaintextHash),
+  description: d,
+}
+
+const half = halfForDelivery({ secretKey: bobSecret, delivery })
+check('the half comes off the record alone', same(half, aFromSender))
+
+const looked = inspectDelivery({ secretKey: bobSecret, delivery, ciphertext: sealed.ciphertext })
+check('inspecting reads the description', looked.description === 'one invoice, 40kb')
+check('and reports the size', looked.ciphertextBytes === sealed.ciphertext.length)
+check('and the hash it checked', looked.ciphertextHash === delivery.ciphertextHash)
+
+// A substituted file must be caught before anything is shown about it.
+const swapped = encryptFile(new TextEncoder().encode('something else entirely'))
+check(
+  'a ciphertext that is not the committed one is refused',
+  refuses(() => inspectDelivery({ secretKey: bobSecret, delivery, ciphertext: swapped.ciphertext })),
+)
+
+// Inspecting must not be a way to read the file.
+check('inspecting returns no plaintext', looked.plaintext === undefined)
+
+console.log('\nopening, and not before')
+check(
+  'without B there is nothing to open with',
+  refuses(() => openDelivery({ secretKey: bobSecret, delivery, ciphertext: sealed.ciphertext, releasedKey: null })),
+)
+check(
+  'an all-zero B is the same as none',
+  refuses(() => openDelivery({
+    secretKey: bobSecret, delivery, ciphertext: sealed.ciphertext, releasedKey: '0x' + '00'.repeat(32),
+  })),
+)
+check(
+  'a wrong B does not open it',
+  refuses(() => openDelivery({
+    secretKey: bobSecret, delivery, ciphertext: sealed.ciphertext, releasedKey: '0x' + 'ab'.repeat(32),
+  })),
+)
+
+const released = openDelivery({
+  secretKey: bobSecret,
+  delivery,
+  ciphertext: sealed.ciphertext,
+  releasedKey: '0x' + toHex(B),
+})
+check('with B it opens', same(released.plaintext, file))
+check('and reports the preimage', released.plaintextHash === toHex(sealed.plaintextHash))
+
+// A sender who released a good B for a file that is not what they committed to
+// is the junk case: detected here, after acceptance, which is the honest limit.
+const junk = { ...delivery, plaintextCommitment: commitToWord(new Uint8Array(32).fill(9)) }
+check(
+  'a file that is not what was committed to is refused',
+  refuses(() => openDelivery({
+    secretKey: bobSecret, delivery: junk, ciphertext: sealed.ciphertext, releasedKey: '0x' + toHex(B),
+  })),
+)
+
+// And somebody else's key opens nothing, B or no B.
+check(
+  'a stranger cannot open it even with B',
+  refuses(() => openDelivery({
+    secretKey: stranger, delivery, ciphertext: sealed.ciphertext, releasedKey: '0x' + toHex(B),
+  })),
+)
 
 console.log(`\n${pass} passed, ${fail} failed  (keysplit)\n`)
 process.exit(fail === 0 ? 0 : 1)

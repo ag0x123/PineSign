@@ -44,6 +44,39 @@
     </p>
   </section>
 
+  <!--
+    What a signature is for, shown here rather than in the app.
+
+    The app asks for a signature; this page is what the user is looking at
+    when they give one. So the summary is rendered here, from the delivery the
+    contract holds, and the passkey is not touched until the button below is
+    pressed. An app cannot obtain an acceptance without the user reading this.
+  -->
+  <section id="step-confirm" hidden>
+    <h2>Accept this delivery?</h2>
+    <p class="hint">
+      Signing this records your acceptance on Ethereum. The sender then releases
+      the second half of the key and the file opens.
+    </p>
+
+    <dl class="facts">
+      <dt>What it is</dt><dd id="c-description">—</dd>
+      <dt>Size</dt><dd id="c-size">—</dd>
+      <dt>Stored file</dt><dd class="mono" id="c-ciphertext">—</dd>
+      <dt>Delivery</dt><dd class="mono" id="c-transfer">—</dd>
+      <dt>Signing</dt><dd class="mono" id="c-digest">—</dd>
+    </dl>
+
+    <p class="hint small">
+      The stored file has been fetched and checked against what the sender committed
+      to. You are not signing for the file's contents — only that you accept delivery
+      of it. If it turns out not to be what was described, that is recorded too.
+    </p>
+
+    <button id="confirm-accept" type="button">Accept with passkey</button>
+    <button id="decline-accept" type="button" class="secondary">Not now</button>
+  </section>
+
   <section id="step-done" hidden>
     <h2>Signed in</h2>
     <p class="hint">You are <strong id="who"></strong>.</p>

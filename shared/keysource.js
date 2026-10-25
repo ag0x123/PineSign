@@ -127,3 +127,43 @@ export function encryptFor({ plaintext, recipientPubKey }) {
 export function openTransfer({ ciphertext, senderPubKey, expectedCommitment }) {
   return call('openTransfer', { ciphertext: Array.from(ciphertext), senderPubKey, expectedCommitment })
 }
+
+// ---- deliveries ----
+//
+// The app reads the delivery from the chain and the ciphertext from Swarm, and
+// passes both in. It gets back a description and a verdict on the ciphertext —
+// never the recipient's key half, which is what would let it decrypt early.
+
+/**
+ * Look at a delivery without agreeing to anything.
+ *
+ * The sign-in window checks the ciphertext against the record before it
+ * returns, so a mismatch arrives as an error rather than as a description the
+ * user might act on.
+ */
+export function inspectDelivery({ delivery, ciphertext }) {
+  return call('inspect', { delivery, ciphertext: Array.from(ciphertext) })
+}
+
+/**
+ * Ask for an acceptance.
+ *
+ * The digest must be the one read from the contract. The sign-in window shows
+ * the user what it means and waits for them before touching the passkey, so
+ * this call can sit unanswered for as long as they take — and can come back
+ * refused, which is not an error in the app so much as an answer.
+ */
+export function signAccept({ digest, rpId, summary }) {
+  return call('signAccept', { digest, rpId, summary })
+}
+
+/**
+ * Open a released delivery.
+ *
+ * `releasedKey` is `B`, read from the chain, where it does not exist until the
+ * acceptance has been recorded. So this cannot be made to work early by
+ * calling it differently.
+ */
+export function openDelivery({ delivery, ciphertext, releasedKey }) {
+  return call('open', { delivery, ciphertext: Array.from(ciphertext), releasedKey })
+}

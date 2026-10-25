@@ -19,6 +19,8 @@ import {
   toHex, fromHex, keccak256,
 } from '../../shared/crypto.js'
 import { createAndDerive, derive, bytesToBase64url, NoPrfError } from '../../shared/prf.js'
+import { assertOverDigest } from '../../shared/passkey-sign.js'
+import { inspectDelivery, openDelivery } from '../../shared/keysplit.js'
 import { sha256 } from '@noble/hashes/sha256'
 
 const GATEWAY = __PINESIGN_GATEWAY__
@@ -40,9 +42,51 @@ function say(message, kind = '') {
 }
 
 function show(step) {
-  for (const id of ['step-email', 'step-code', 'step-passkey', 'step-done']) {
+  for (const id of ['step-email', 'step-code', 'step-passkey', 'step-confirm', 'step-done']) {
     el(id).hidden = id !== step
   }
+}
+
+const short = (hex) => `${hex.slice(0, 10)}…${hex.slice(-8)}`
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} bytes`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
+ * Put the delivery in front of the user and wait for them to decide.
+ *
+ * Resolves on accept and rejects on decline, so the caller's `await` reads as
+ * the user's answer. Nothing touches the passkey until this resolves.
+ */
+function confirmAccept({ description, ciphertextHash, ciphertextBytes, transferId, digest }) {
+  el('c-description').textContent = description ?? 'the sender left no description'
+  el('c-size').textContent = formatSize(ciphertextBytes)
+  el('c-ciphertext').textContent = short(ciphertextHash)
+  el('c-transfer').textContent = short(transferId)
+  el('c-digest').textContent = short(digest)
+  show('step-confirm')
+  say('')
+
+  return new Promise((resolve, reject) => {
+    const accept = () => {
+      cleanup()
+      resolve(true)
+    }
+    const decline = () => {
+      cleanup()
+      show('step-done')
+      reject(new Error('the recipient declined'))
+    }
+    function cleanup() {
+      el('confirm-accept').removeEventListener('click', accept)
+      el('decline-accept').removeEventListener('click', decline)
+    }
+    el('confirm-accept').addEventListener('click', accept)
+    el('decline-accept').addEventListener('click', decline)
+  })
 }
 
 async function api(path, body) {
@@ -205,6 +249,61 @@ const methods = {
       plaintextHash,
       senderSignature: toHex(sign(digest, identity.privateKey)),
     }
+  },
+
+  /**
+   * Look at a delivery before agreeing to anything.
+   *
+   * Three things happen here and the order is the point. The recipient's key
+   * half is derived, which needs the passkey-derived key and nothing from the
+   * sender. The description is decrypted with it, so the recipient can read
+   * what they are being offered. And the ciphertext is fetched and hashed
+   * against the record — because accepting is a signature, and signing for an
+   * envelope whose contents do not match what was promised is exactly what
+   * this is meant to stop.
+   *
+   * No passkey tap, no signature, nothing on chain. Just a look.
+   */
+  inspect({ delivery, ciphertext }) {
+    return inspectDelivery({ secretKey: identity.privateKey, delivery, ciphertext: new Uint8Array(ciphertext) })
+  },
+
+  /**
+   * Sign the acceptance.
+   *
+   * The digest comes from the contract, not from here — it is read from the
+   * chain by the caller and the contract recomputes it from its own record, so
+   * a signature over anything else is refused on chain rather than trusted
+   * here. What this returns is relayable by anyone and decides nothing: the
+   * contract is what turns it into an acceptance.
+   */
+  async signAccept({ digest, rpId, summary }) {
+    // The summary is rendered here and the passkey is not touched until the
+    // user presses the button. An app that wanted a signature quietly would
+    // have to get past a panel it does not control.
+    await confirmAccept({ ...summary, digest })
+    say('Waiting for your passkey…')
+    const assertion = await assertOverDigest({ digest, rpId })
+    show('step-done')
+    say('Accepted. Waiting for the sender to release the key.')
+    return assertion
+  },
+
+  /**
+   * Open a delivery, once both halves exist.
+   *
+   * `B` comes from the chain, where it only appears after the acceptance. So
+   * this cannot succeed early: without `B` there is no `K`, and the call fails
+   * on a missing argument rather than on a decryption that half-works.
+   */
+  open({ delivery, ciphertext, releasedKey }) {
+    const opened = openDelivery({
+      secretKey: identity.privateKey,
+      delivery,
+      ciphertext: new Uint8Array(ciphertext),
+      releasedKey,
+    })
+    return { plaintext: Array.from(opened.plaintext), plaintextHash: opened.plaintextHash }
   },
 
   /**

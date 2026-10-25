@@ -99,3 +99,27 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 
 .status.error { color: var(--bad); }
+
+/* The confirmation summary. Plain pairs, because a user reading this is
+   deciding whether to sign and ornament would be in the way. */
+.facts {
+  margin: 14px 0 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  font-size: 13px;
+}
+
+.facts dt { color: var(--dim); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}

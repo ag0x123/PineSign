@@ -266,3 +266,75 @@ export function joinPublicKey({ x, odd }) {
   out.set(bytes, 1)
   return out
 }
+
+// ---- a delivery, from the recipient's side ----
+
+/**
+ * The recipient's key half for one delivery, from the chain record.
+ *
+ * Everything needed is public except the recipient's own key: the ephemeral
+ * public key and the transfer id both come off the record. That is what makes
+ * `A` derivable the moment a delivery exists, and derivable by nobody else.
+ */
+export function halfForDelivery({ secretKey, delivery }) {
+  return recipientHalf({
+    secretKey,
+    theirPublicKey: joinPublicKey({ x: delivery.ephemeralX, odd: delivery.ephemeralOdd }),
+    transferId: delivery.transferId,
+  })
+}
+
+/**
+ * Look at a delivery without accepting it.
+ *
+ * The ciphertext is checked against the record first and a mismatch throws, so
+ * a caller cannot end up showing a friendly description beside a file that is
+ * not the one committed to. The description is best-effort: one that will not
+ * open is worth reporting but is not grounds for refusing, because the
+ * commitments cover the file and not the label.
+ */
+export function inspectDelivery({ secretKey, delivery, ciphertext }) {
+  const bytes = asBytes(ciphertext)
+  const ciphertextHash = hash(bytes)
+  if (ciphertextHash.toLowerCase() !== delivery.ciphertextHash.toLowerCase()) {
+    throw new Error('the stored file is not the one this delivery commits to — do not accept it')
+  }
+
+  const half = halfForDelivery({ secretKey, delivery })
+  let description = null
+  if (delivery.description) {
+    try {
+      description = decryptDescription(delivery.description, half)
+    } catch {
+      description = null
+    }
+  }
+
+  return { description, ciphertextHash, ciphertextBytes: bytes.length, transferId: delivery.transferId }
+}
+
+/**
+ * Open a released delivery.
+ *
+ * Refuses an absent or empty `B` by name rather than attempting a decryption
+ * that cannot work: "not released yet" is the answer, and a failed AEAD would
+ * have been a worse way to say it.
+ */
+export function openDelivery({ secretKey, delivery, ciphertext, releasedKey }) {
+  if (!releasedKey || /^(0x)?0*$/.test(String(releasedKey))) {
+    throw new Error('that delivery has not been released yet — there is nothing to open with')
+  }
+
+  const half = halfForDelivery({ secretKey, delivery })
+  const key = xor(half, asBytes(releasedKey))
+  const opened = decryptFile(ciphertext, key)
+
+  // The sender committed to keccak(keccak(salt‖F)). This is what turns "it
+  // decrypted" into "it decrypted to what was promised".
+  const commitment = commitToWord(opened.plaintextHash)
+  if (commitment.toLowerCase() !== delivery.plaintextCommitment.toLowerCase()) {
+    throw new Error('the file decrypted, but it is not what the sender committed to')
+  }
+
+  return { plaintext: opened.plaintext, plaintextHash: toHex(opened.plaintextHash), salt: opened.salt }
+}

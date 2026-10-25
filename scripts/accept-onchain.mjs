@@ -77,6 +77,30 @@ say('P-256 precompile')
     fail(`the precompile at 0x100 did not verify a good signature (returned ${out.data})`)
   }
   ok('verifies a genuine signature')
+
+  /**
+   * And the same signature in its high-s form.
+   *
+   * ECDSA has two valid s values for every signature, and real authenticators
+   * emit both. If the precompile took only the low one, acceptance would fail
+   * for some users some of the time — the worst shape a bug can have. So it is
+   * checked rather than assumed, and nothing normalises s anywhere.
+   */
+  const high = new p256.Signature(sig.r, p256.CURVE.n - sig.s)
+  const highInput = Buffer.concat([
+    digest,
+    Buffer.from(high.toCompactRawBytes()),
+    point.subarray(1, 33),
+    point.subarray(33, 65),
+  ])
+  const highOut = await client.call({
+    to: '0x0000000000000000000000000000000000000100',
+    data: toHex(highInput),
+  })
+  if (highOut.data !== `0x${'00'.repeat(31)}01`) {
+    fail('the precompile rejects high-s signatures, so some authenticators would fail')
+  }
+  ok('and accepts the high-s form of it')
 }
 
 // ---- deploy ----
