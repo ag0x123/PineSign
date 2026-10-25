@@ -32,6 +32,7 @@ for _ in $(seq 1 60); do
 done
 
 node test/webauthn.js
+node test/keysplit.js
 
 BASE="http://localhost:$PORT" SERVER_LOG="$LOG" SIGNIN_ORIGIN=https://v1.id.test.local \
 PINESIGN_STORAGE_DIR=.storage-test SIGNIN_DOMAIN=id.test.local PASSKEY_RP_ID=id.test.local node test/flow.js

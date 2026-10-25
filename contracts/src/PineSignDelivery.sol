@@ -191,6 +191,15 @@ contract PineSignDelivery {
      * The id is derived from the transfer, never chosen — so no field can be
      * swapped afterwards and no id can be squatted by someone who cannot
      * construct it.
+     *
+     * `releaseCommitment` is deliberately *not* in here, and the reason is
+     * worth stating because the omission looks like a gap. The recipient's key
+     * half is `A = HKDF(ECDH(e_A, pk_B), transferId)`, and `B = K XOR A`, so
+     * `keccak(B)` cannot be an input to the id that `A` is derived from
+     * without the definition eating itself. Leaving it out costs nothing: the
+     * same transfer sent twice collides on `AlreadySent`, a fresh send needs a
+     * fresh ephemeral key, and `release` checks `B` against the commitment the
+     * record actually holds.
      */
     function transferId(address sender, SendParams memory p) public pure returns (bytes32) {
         return keccak256(
@@ -204,7 +213,6 @@ contract PineSignDelivery {
                 p.ephemeralOdd,
                 p.ciphertextHash,
                 p.plaintextCommitment,
-                p.releaseCommitment,
                 p.descriptionHash,
                 p.acceptBy,
                 p.releaseBy

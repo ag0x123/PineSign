@@ -26,6 +26,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as setup from '../gateway/setup.js'
+import * as keysplit from '../shared/keysplit.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sha256 = (b) => createHash('sha256').update(b).digest()
@@ -83,14 +84,50 @@ say('P-256 precompile')
 const artifact = JSON.parse(
   await readFile(path.join(ROOT, 'contracts', 'out', 'PineSignDelivery.sol', 'PineSignDelivery.json'), 'utf8'),
 )
+const libArtifact = JSON.parse(
+  await readFile(path.join(ROOT, 'contracts', 'out', 'WebAuthn.sol', 'WebAuthn.json'), 'utf8'),
+)
+
+/**
+ * Link the library into the bytecode.
+ *
+ * WebAuthn's entry points are `public`, so it deploys on its own and the
+ * delivery contract reaches it by delegatecall. Solidity leaves a placeholder
+ * in the bytecode where the address goes, and the artifact says where; Foundry
+ * fills this in for its own tests, but a deployment from here has to do it.
+ */
+function link(bytecode, references, address) {
+  let out = bytecode
+  for (const file of Object.values(references ?? {})) {
+    for (const positions of Object.values(file)) {
+      for (const { start, length } of positions) {
+        if (length !== 20) throw new Error(`unexpected link reference length ${length}`)
+        const head = out.slice(0, 2 + start * 2)
+        const tail = out.slice(2 + (start + length) * 2)
+        out = head + address.slice(2).toLowerCase() + tail
+      }
+    }
+  }
+  if (out.includes('__$')) throw new Error('bytecode still has an unlinked placeholder')
+  return out
+}
 
 const rpIdHash = toHex(sha256(Buffer.from(RP_ID, 'utf8')))
 const originHash = keccak256(Buffer.from(ORIGIN, 'utf8'))
 
+say('Deploying the WebAuthn library')
+const libHash = await wallet.deployContract({
+  abi: libArtifact.abi,
+  bytecode: libArtifact.bytecode.object,
+})
+const libDeployed = await client.waitForTransactionReceipt({ hash: libHash })
+if (libDeployed.status !== 'success') fail(`library deployment reverted (${libHash})`)
+ok(`${libDeployed.contractAddress}  ${gasOf(libDeployed, 'library')} gas`)
+
 say('Deploying PineSignDelivery')
 const deployHash = await wallet.deployContract({
   abi: artifact.abi,
-  bytecode: artifact.bytecode.object,
+  bytecode: link(artifact.bytecode.object, artifact.bytecode.linkReferences, libDeployed.contractAddress),
   args: [rpIdHash, [originHash]],
 })
 const deployed = await client.waitForTransactionReceipt({ hash: deployHash })
@@ -127,6 +164,10 @@ const params = {
   releaseBy: BigInt(Math.floor(Date.now() / 1000) + 7200),
 }
 
+say('the transfer id, computed both ways')
+await checkTransferId(contract, account.address, params)
+ok('shared/keysplit.js agrees with the contract')
+
 say('send')
 const sendHash = await wallet.writeContract({ ...contract, functionName: 'send', args: [params] })
 const sent = await client.waitForTransactionReceipt({ hash: sendHash })
@@ -157,11 +198,62 @@ function errorName(err) {
   return null
 }
 
-const stateNames = ['None', 'Sent', 'Accepted', 'Released', 'Expired', 'SenderAborted']
-const stateOf = async () =>
-  stateNames[await client.readContract({ ...contract, functionName: 'stateOf', args: [id] })]
+/**
+ * Does the browser agree with the contract about the id?
+ *
+ * It has to exactly, because `A` is salted with it. A disagreement would not
+ * raise an error anywhere — the sender would derive one half, the recipient
+ * another, and the file would simply never open. So it is checked against the
+ * contract rather than against another copy of the same assumption.
+ */
+async function checkTransferId(contract, sender, params) {
+  const onChain = await client.readContract({
+    ...contract,
+    functionName: 'transferId',
+    args: [sender, params],
+  })
+  const inJs = keysplit.transferId({
+    sender,
+    passkeyX: params.passkeyX,
+    passkeyY: params.passkeyY,
+    pkBX: params.pkBX,
+    pkBOdd: params.pkBOdd,
+    ephemeralX: params.ephemeralX,
+    ephemeralOdd: params.ephemeralOdd,
+    ciphertextHash: params.ciphertextHash,
+    plaintextCommitment: params.plaintextCommitment,
+    descriptionHash: params.descriptionHash,
+    acceptBy: params.acceptBy,
+    releaseBy: params.releaseBy,
+  })
+  if (inJs.toLowerCase() !== onChain.toLowerCase()) {
+    fail(`the id does not match the contract\n   contract ${onChain}\n   browser  ${inJs}`)
+  }
+  return onChain
+}
 
-if ((await stateOf()) !== 'Sent') fail(`expected Sent, got ${await stateOf()}`)
+const stateNames = ['None', 'Sent', 'Accepted', 'Released', 'Expired', 'SenderAborted']
+
+/**
+ * Wait for the chain to agree that the state is what it should be.
+ *
+ * A public RPC load-balances across nodes, so a read straight after a
+ * confirmed transaction can land on a replica that has not caught up. Reading
+ * once and failing produced "expected Released, got Released" — two reads, two
+ * replicas. So the check is a short retry, and the failure message reports the
+ * value it actually settled on.
+ */
+async function expectState(id, want) {
+  let seen
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 1000))
+    seen = stateNames[await client.readContract({ ...contract, functionName: 'stateOf', args: [id] })]
+    if (seen === want) return seen
+  }
+  fail(`expected ${want}, and after ten reads over ten seconds it is still ${seen}`)
+}
+
+await expectState(id, 'Sent')
 ok('state is Sent')
 
 const before = await client.readContract({ ...contract, functionName: 'get', args: [id] })
@@ -209,7 +301,7 @@ const accepted = await client.waitForTransactionReceipt({ hash: acceptHash })
 if (accepted.status !== 'success') fail(`accept reverted (${acceptHash})`)
 ok(`verified on chain  ${gasOf(accepted, 'accept')} gas`)
 
-if ((await stateOf()) !== 'Accepted') fail(`expected Accepted, got ${await stateOf()}`)
+await expectState(id, 'Accepted')
 ok('state is Accepted')
 
 const afterAccept = await client.readContract({ ...contract, functionName: 'get', args: [id] })
@@ -224,7 +316,8 @@ say('a tampered assertion')
   // On a fresh transfer, because this one is already accepted.
   const second = { ...params, ephemeralX: toHex(randomBytes(32)) }
   const h = await wallet.writeContract({ ...contract, functionName: 'send', args: [second] })
-  await client.waitForTransactionReceipt({ hash: h })
+  const secondSent = await client.waitForTransactionReceipt({ hash: h })
+  if (secondSent.status !== 'success') fail(`the second send reverted (${h})`)
   const id2 = await client.readContract({ ...contract, functionName: 'transferId', args: [account.address, second] })
   const digest2 = await client.readContract({ ...contract, functionName: 'acceptDigest', args: [id2] })
   const challenge2 = Buffer.from(digest2.slice(2), 'hex').toString('base64url')
@@ -269,7 +362,7 @@ const released = await client.waitForTransactionReceipt({ hash: releaseHash })
 if (released.status !== 'success') fail(`release reverted (${releaseHash})`)
 ok(`${gasOf(released, 'release')} gas`)
 
-if ((await stateOf()) !== 'Released') fail(`expected Released, got ${await stateOf()}`)
+await expectState(id, 'Released')
 const final = await client.readContract({ ...contract, functionName: 'get', args: [id] })
 if (final.releasedKey !== B) fail('the released key is not the committed B')
 ok('state is Released, and B is on chain')

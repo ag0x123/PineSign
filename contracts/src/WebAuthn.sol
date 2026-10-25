@@ -4,6 +4,13 @@ pragma solidity ^0.8.24;
 /**
  * WebAuthn assertion verification, on chain.
  *
+ * `verify` and `originHashOf` are `public`, which makes this a deployed
+ * library reached by delegatecall rather than code inlined into every caller.
+ * The byte-walking in here is most of the logic, and a contract that embedded
+ * it paid for it in deployment size; linking means the delivery contract
+ * carries a call instead of a copy, and a second contract that needs passkey
+ * verification reuses this one.
+ *
  * The point of doing this here rather than on a server is that nobody has to
  * be trusted to have done it. A passkey tap becomes a fact the contract
  * checked for itself, so "Bob accepted this file" is not something a gateway
@@ -54,7 +61,7 @@ library WebAuthn {
      * Returns zero when the field is not where the caller said it is, and zero
      * is never an allowed origin — so a wrong index fails closed.
      */
-    function originHashOf(Assertion memory a) internal pure returns (bytes32) {
+    function originHashOf(Assertion memory a) public pure returns (bytes32) {
         if (!hasAt(a.clientDataJSON, a.originIndex, ORIGIN_FIELD)) return bytes32(0);
         return quotedHashAt(a.clientDataJSON, a.originIndex + ORIGIN_FIELD.length);
     }
@@ -73,7 +80,7 @@ library WebAuthn {
         bytes32 originHash,
         bytes32 pubKeyX,
         bytes32 pubKeyY
-    ) internal view returns (bool) {
+    ) public view returns (bool) {
         // --- authenticatorData ---
         //
         // 32 bytes of rpIdHash, one of flags, four of counter.
