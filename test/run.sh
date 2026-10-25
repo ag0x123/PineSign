@@ -34,6 +34,7 @@ done
 node test/webauthn.js
 node test/keysplit.js
 node test/passkey-sign.js
+node test/releaser.js
 
 BASE="http://localhost:$PORT" SERVER_LOG="$LOG" SIGNIN_ORIGIN=https://v1.id.test.local \
 PINESIGN_STORAGE_DIR=.storage-test SIGNIN_DOMAIN=id.test.local PASSKEY_RP_ID=id.test.local node test/flow.js

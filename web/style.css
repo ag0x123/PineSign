@@ -582,3 +582,18 @@ body.admin { background: linear-gradient(180deg, #101827 0%, #12161f 100%); back
 .inv-items .who { color: var(--text); }
 .inv-items .st { color: var(--haze); white-space: nowrap; }
 .inv-items .st.accepted { color: #7bd88f; }
+
+/* The release choice. Two options with real text, because the difference
+   between them is a trust decision and not a preference. */
+.choice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.choice input { margin-top: 3px; flex: 0 0 auto; }
+.choice strong { font-weight: 600; }

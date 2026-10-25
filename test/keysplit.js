@@ -11,7 +11,7 @@ import {
   ephemeral, recipientHalf, xor, encryptFile, decryptFile,
   encryptDescription, decryptDescription, transferId, splitPublicKey, joinPublicKey,
   commitToWord, hash, SALT_BYTES, inspectDelivery, openDelivery, halfForDelivery,
-  prepareDelivery, sealSenderHalf, openSenderHalf,
+  prepareDelivery, sealSenderHalf, openSenderHalf, sealHalfTo, openHalfFrom,
 } from '../shared/keysplit.js'
 import { toHex } from '../shared/crypto.js'
 
@@ -278,6 +278,71 @@ check(
     secretKey: bobSecret, delivery: record, ciphertext: prepared.ciphertext, releasedKey: null,
   })),
 )
+
+console.log('\nhanding the half to a releaser')
+// The default: the gateway holds the half so it can release without the
+// sender. It can read it, which is the cost, and the tests say so either way.
+const gatewaySecret = secp256k1.utils.randomPrivateKey()
+const gatewayPublic = secp256k1.getPublicKey(gatewaySecret, true)
+const alicePublic = secp256k1.getPublicKey(aliceSecret, true)
+
+const toGateway = sealHalfTo({
+  secretKey: aliceSecret, theirPublicKey: gatewayPublic, transferId: ID, senderHalf: B,
+})
+check('the gateway can open what was sealed to it', same(
+  openHalfFrom({ secretKey: gatewaySecret, theirPublicKey: alicePublic, transferId: ID, blob: toGateway }),
+  B,
+))
+check('and so can the sender, from her side of the exchange', same(
+  openHalfFrom({ secretKey: aliceSecret, theirPublicKey: gatewayPublic, transferId: ID, blob: toGateway }),
+  B,
+))
+check('a third party cannot', refuses(() => openHalfFrom({
+  secretKey: stranger, theirPublicKey: alicePublic, transferId: ID, blob: toGateway,
+})))
+check('and not under another transfer id', refuses(() => openHalfFrom({
+  secretKey: gatewaySecret, theirPublicKey: alicePublic, transferId: '0x' + '77'.repeat(32), blob: toGateway,
+})))
+
+// The two modes must be distinguishable and not interchangeable.
+const toSelf = sealSenderHalf({ secretKey: aliceSecret, transferId: ID, senderHalf: B })
+check('the two sealings are different blobs', !same(toSelf, toGateway))
+check('the gateway cannot open one sealed to the sender alone', refuses(() => openHalfFrom({
+  secretKey: gatewaySecret, theirPublicKey: alicePublic, transferId: ID, blob: toSelf,
+})))
+
+console.log('\npreparing a delivery either way')
+const common = {
+  sender: senderAddress,
+  plaintext: file,
+  description: 'one invoice',
+  recipientPublicKey: bobPublic,
+  recipientPasskey: passkey,
+  acceptBy: 1700000000n,
+  releaseBy: 1700003600n,
+  senderSecretKey: aliceSecret,
+}
+
+const byGateway = prepareDelivery({ ...common, releaser: senderAddress, releaserPublicKey: gatewayPublic })
+check('nominating a releaser is reported as such', byGateway.releaseMode === 'releaser')
+check('and the gateway can open that half', same(
+  openHalfFrom({
+    secretKey: gatewaySecret, theirPublicKey: alicePublic,
+    transferId: byGateway.transferId, blob: byGateway.keptHalf,
+  }),
+  byGateway.senderHalf,
+))
+
+const bySelf = prepareDelivery({ ...common, releaser: senderAddress })
+check('keeping it is reported as such', bySelf.releaseMode === 'sender')
+check('and only the sender can open that one', same(
+  openSenderHalf({ secretKey: aliceSecret, transferId: bySelf.transferId, blob: bySelf.keptHalf }),
+  bySelf.senderHalf,
+))
+check('the gateway cannot', refuses(() => openHalfFrom({
+  secretKey: gatewaySecret, theirPublicKey: alicePublic,
+  transferId: bySelf.transferId, blob: bySelf.keptHalf,
+})))
 
 console.log(`\n${pass} passed, ${fail} failed  (keysplit)\n`)
 process.exit(fail === 0 ? 0 : 1)

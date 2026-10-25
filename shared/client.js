@@ -50,6 +50,11 @@ export class Gateway {
 
   // ---- deliveries ----
 
+  /** Who this gateway is, if a sender wants it to release on their behalf. */
+  releaser() {
+    return this.#json('/api/delivery/releaser')
+  }
+
   /** The digest the sender signs, computed by the contract. */
   async sendDigest(signer, params) {
     return this.#post('/api/delivery/send-digest', { ...(await this.#auth(signer)), params })

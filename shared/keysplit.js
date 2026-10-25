@@ -371,6 +371,46 @@ export function sealSenderHalf({ secretKey, transferId, senderHalf }) {
   return out
 }
 
+/**
+ * Seal `B` to somebody else, so they can release it on the sender's behalf.
+ *
+ * The default releaser is the gateway, because the alternative asks the sender
+ * to still be reachable when the recipient happens to accept — which, for a
+ * transfer that may sit for days, is a worse experience than most people would
+ * accept and a worse outcome than the risk it avoids.
+ *
+ * What it costs is stated plainly: the gateway can read this one, so a gateway
+ * that wanted to could hand `B` to a recipient who never accepted. That is the
+ * trade, and a sender who does not want to make it chooses to release herself.
+ *
+ * ECDH between the two parties' existing keys — no ephemeral, because both are
+ * known to each other and the transfer id already separates one blob from the
+ * next.
+ */
+export function sealHalfTo({ secretKey, theirPublicKey, transferId, senderHalf }) {
+  const key = halfKeyFor(secretKey, theirPublicKey, transferId)
+  const nonce = randomBytes(12)
+  const sealed = gcm(key, nonce).encrypt(asBytes(senderHalf))
+  const out = new Uint8Array(nonce.length + sealed.length)
+  out.set(nonce, 0)
+  out.set(sealed, nonce.length)
+  return out
+}
+
+/** The same, from the other side. Either party derives the same key. */
+export function openHalfFrom({ secretKey, theirPublicKey, transferId, blob }) {
+  const key = halfKeyFor(secretKey, theirPublicKey, transferId)
+  const bytes = asBytes(blob)
+  const half = gcm(key, bytes.slice(0, 12)).decrypt(bytes.slice(12))
+  if (half.length !== 32) throw new Error('that is not a 32-byte key half')
+  return half
+}
+
+function halfKeyFor(secretKey, theirPublicKey, transferId) {
+  const point = secp256k1.getSharedSecret(asBytes(secretKey), asBytes(theirPublicKey), true)
+  return hkdf(sha256, point.slice(1), asBytes(transferId), KEEP_INFO, 32)
+}
+
 export function openSenderHalf({ secretKey, transferId, blob }) {
   const key = hkdf(sha256, asBytes(secretKey), asBytes(transferId), KEEP_INFO, 32)
   const bytes = asBytes(blob)
@@ -398,6 +438,16 @@ export function prepareDelivery({
   acceptBy,
   releaseBy,
   senderSecretKey,
+  /**
+   * Who gets the sender's half, and therefore who can release it.
+   *
+   * Given a public key, the half is sealed so that holder can read it — the
+   * gateway, by default, which then releases on the acceptance without the
+   * sender having to be anywhere. Omitted, the half is sealed to the sender
+   * alone: nobody else can release, and nobody else can leak it, but the
+   * recipient waits until the sender comes back.
+   */
+  releaserPublicKey = null,
 }) {
   const eA = ephemeral()
   const sealed = encryptFile(plaintext)
@@ -458,8 +508,15 @@ export function prepareDelivery({
     },
     ciphertext: sealed.ciphertext,
     description: descriptionBlob,
-    /** Sealed to the sender, for the gateway to hold and not read. */
-    keptHalf: sealSenderHalf({ secretKey: senderSecretKey, transferId: id, senderHalf }),
+    /**
+     * The sender's half, sealed. Who can open it is the whole choice here:
+     * the nominated releaser, or — with no key given — only the sender.
+     */
+    keptHalf: releaserPublicKey
+      ? sealHalfTo({ secretKey: senderSecretKey, theirPublicKey: releaserPublicKey, transferId: id, senderHalf })
+      : sealSenderHalf({ secretKey: senderSecretKey, transferId: id, senderHalf }),
+    /** So a caller knows which of the two it got, without inferring it. */
+    releaseMode: releaserPublicKey ? 'releaser' : 'sender',
     /** Returned so a caller can check the arithmetic; not for storing. */
     senderHalf,
   }

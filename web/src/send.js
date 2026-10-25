@@ -26,6 +26,8 @@ let identity = null
 let me = null
 let recipient = null
 let file = null
+/** Who this gateway is as a releaser, if it can be one at all. */
+let gatewayReleaser = null
 
 function say(message, kind = '') {
   el('status').textContent = message
@@ -74,6 +76,15 @@ async function afterSignIn() {
   el('me').textContent = me.name
   el('compose').hidden = false
   say('')
+
+  // If this gateway cannot release for anyone, the choice is not offered —
+  // showing an option that does not work would be worse than not having it.
+  gatewayReleaser = await gateway.releaser().catch(() => null)
+  if (!gatewayReleaser?.publicKey) {
+    el('release-gateway').disabled = true
+    el('release-self').checked = true
+  }
+
   await refreshOutbox()
 
   // Arrived from the "they accepted" email.
@@ -146,15 +157,19 @@ el('send').addEventListener('click', async () => {
     // Everything that touches a key happens in the sign-in window. This page
     // never sees the file's key or either half of it.
     say('Encrypting and splitting the key in the sign-in window…')
+    // The one trust decision on this page. Nominating the gateway means it can
+    // read the held-back half and release without the sender; keeping it means
+    // nobody else can, and the sender has to come back.
+    const byGateway = el('release-gateway').checked && Boolean(gatewayReleaser?.publicKey)
+
     const prepared = await prepareSend({
       sender: identity.address,
       plaintext,
       description: el('description').value.trim() || `${file.name}, ${formatSize(file.size)}`,
       recipientPublicKey: recipient.pubKey,
       recipientPasskey: { x: recipient.passkeyX, y: recipient.passkeyY },
-      // The sender releases, by default and without needing any ether: the
-      // release is signed here and carried by whoever will carry it.
-      releaser: identity.address,
+      releaser: byGateway ? gatewayReleaser.address : identity.address,
+      releaserPublicKey: byGateway ? gatewayReleaser.publicKey : null,
       acceptBy: String(now + ACCEPT_WINDOW_S),
       releaseBy: String(now + RELEASE_WINDOW_S),
     })
@@ -181,9 +196,13 @@ el('send').addEventListener('click', async () => {
     el('sent-link').textContent = `${location.origin}/claim.html?id=${sent.id}`
     el('sent-link').href = `/claim.html?id=${sent.id}`
     el('sent-tx').textContent = sent.tx
+    el('sent-release').textContent =
+      prepared.releaseMode === 'releaser'
+        ? 'This server will release the key once their acceptance is final. You need not come back.'
+        : 'Come back and release the key once they accept — nobody else can.'
     el('sent').hidden = false
     el('compose').hidden = true
-    say('Sent. They cannot open it until they accept on chain, and you release.', 'done')
+    say('Sent. They cannot open it until they accept on chain, and the key is released.', 'done')
     await refreshOutbox()
   } catch (err) {
     say(err.message, 'error')
@@ -209,7 +228,13 @@ async function offerRelease(id) {
     el('release-panel').hidden = false
     el('release-go').disabled = d.state !== 'Accepted'
     el('release-go').dataset.id = id
-    if (d.state !== 'Accepted') {
+    if (d.releaseMode === 'releaser') {
+      el('release-go').disabled = true
+      el('release-note').textContent =
+        d.state === 'Released'
+          ? 'This server released the key. Nothing for you to do.'
+          : 'This server releases this one once their acceptance is final.'
+    } else if (d.state !== 'Accepted') {
       el('release-note').textContent =
         d.state === 'Sent'
           ? 'They have not accepted yet. There is nothing to release until they do.'

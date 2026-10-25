@@ -13,6 +13,7 @@ Three more need a chain, and are worth running before a deployment is believed:
 npm run check:p256      # is the P-256 precompile live on the target chain
 npm run check:accept    # deploy, and verify one passkey assertion on chain
 npm run e2e             # a whole delivery: send, inspect, accept, release, open
+npm run e2e:gateway     # the same, with the gateway releasing once it is final
 ```
 
 `npm test` starts a throwaway gateway with its own storage directory and no
@@ -129,6 +130,21 @@ by hand.
 - [ ] The sender gets an email saying they can release.
 - [ ] As the sender, release. Your authenticator is not needed — the release is
       signed with the key already derived in the sign-in window.
+
+### Both ways of holding the sender's half
+
+Run section 5 twice, once with each option on the send page.
+
+- [ ] **This server (default).** After the recipient accepts, nobody touches the
+      send page: the gateway releases on its own once the acceptance is final.
+      Watch the gateway log — it should say what it is waiting for, then
+      `released <id> <tx>`.
+- [ ] While it is waiting, confirm `releasedKey` on chain is still thirty-two
+      zero bytes. A release before finality would be a leak, not a race.
+- [ ] **You.** The send page offers a Release button and the gateway never acts.
+      Confirm the gateway log says nothing about this delivery at all.
+- [ ] In that mode, ask the gateway for the sealed half as the sender and
+      confirm it is returned; ask as anyone else and confirm it is not.
 - [ ] As the recipient, open it. The file downloads and the receipt shows a hash
       matching what the sender committed to before you accepted.
 - [ ] Read the state back from the contract directly, with `cast` — not from the

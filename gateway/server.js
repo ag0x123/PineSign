@@ -27,6 +27,7 @@ import * as pages from './pages.js'
 import { BEE_URL } from './bee.js'
 import * as delivery from './delivery.js'
 import * as deliveries from './deliveries.js'
+import * as releaser from './releaser.js'
 import { issueNonce, requireSignature } from './auth.js'
 import { fromHex, addressFromPublicKey } from '../shared/crypto.js'
 import { randomBytes } from 'node:crypto'
@@ -560,6 +561,27 @@ app.get('/api/name/reverse/:pubKey', async (req, res) => {
 // Resolution is public by necessity; enumeration of every user is not.
 app.get('/api/names', setup.requireSetupToken, async (_req, res) => res.json(await names.list()))
 
+/**
+ * Who this gateway is, if a sender wants it to release for them.
+ *
+ * The address goes into the delivery as the releaser; the public key is what
+ * the sender's half is sealed to. A sender who would rather release herself
+ * ignores both and nobody but her can open her half.
+ */
+app.get('/api/delivery/releaser', async (_req, res) => {
+  if (!delivery.configured) {
+    return res.status(503).json({ error: 'this gateway has no delivery contract configured' })
+  }
+  const address = await releaser.address()
+  if (!address) return res.status(503).json({ error: 'this gateway cannot release for anyone' })
+  res.json({
+    address,
+    publicKey: await releaser.publicKey(),
+    // So a sender can see how long an acceptance waits before release.
+    finality: releaser.settings,
+  })
+})
+
 // ---- deliveries: the gateway carries, the contract decides ----
 
 /**
@@ -615,8 +637,18 @@ app.post('/api/delivery', limitSend, requireSignature, async (req, res) => {
     const recipientName = req.body.recipientPubKey
       ? await names.reverse(req.body.recipientPubKey)
       : null
+    // Which of the two ways the half was sealed. A sender who nominated this
+    // gateway as releaser gets automatic release once the acceptance is final;
+    // otherwise the half is opaque here and she releases it herself.
+    const releaserAddress = await releaser.address()
+    const releaseMode =
+      releaserAddress && params.releaser?.toLowerCase() === releaserAddress.toLowerCase()
+        ? 'releaser'
+        : 'sender'
+
     const record = await deliveries.create({
       id: transferId,
+      releaseMode,
       senderPubKey: req.pubKey,
       senderName: sender.name,
       recipientPubKey: req.body.recipientPubKey ?? null,
@@ -691,6 +723,7 @@ app.get('/api/delivery/:id', requireHexParam('id', { length: 64 }), async (req, 
       releasedAt: onChain.releasedAt.toString(),
       // Zero until the acceptance is recorded. This is the whole mechanism.
       releasedKey: onChain.releasedKey,
+      releaseMode: local?.releaseMode ?? null,
       senderName: local?.senderName ?? null,
       filename: local?.filename ?? null,
       size: local?.size ?? null,
@@ -734,6 +767,9 @@ app.post('/api/delivery/:id/accept', limitSend, requireHexParam('id', { length: 
 
     const relayed = await delivery.relayAccept(id, assertion)
 
+    // Where the acceptance landed, which is what the auto-releaser waits on.
+    await deliveries.markAccepted(id, { tx: relayed.tx, blockNumber: relayed.blockNumber })
+
     const local = await deliveries.get(id)
     if (local?.senderPubKey) {
       const senderEmail = await invites.senderEmailFor(local.senderPubKey)
@@ -746,7 +782,18 @@ app.post('/api/delivery/:id/accept', limitSend, requireHexParam('id', { length: 
       }
     }
 
-    res.json({ ok: true, ...relayed, state: await delivery.stateOf(id) })
+    const state = await delivery.stateOf(id)
+    res.json({
+      ok: true,
+      ...relayed,
+      state,
+      // Said plainly, because a recipient who is waiting should know whether
+      // anyone has to come back for them or not.
+      release:
+        local?.releaseMode === 'releaser'
+          ? { by: 'gateway', after: releaser.settings.mode }
+          : { by: 'sender' },
+    })
   } catch (err) {
     res.status(400).json({ error: err.message })
   }
@@ -932,6 +979,15 @@ app.listen(PORT, HOST, async () => {
 
   // Always printed: this link is the only way into the admin panel, and an
   // operator who has lost it has lost access to their own server.
+  // Automatic release, if a contract is configured and senders nominate us.
+  if (releaser.start({ log: console.log })) {
+    const { mode, confirmations, everyMs } = releaser.settings
+    console.log(
+      `  releasing for senders who ask, once ${mode === 'finalized' ? 'the acceptance is finalized' : `${confirmations} confirmations deep`}` +
+        ` (checked every ${Math.round(everyMs / 1000)}s)`,
+    )
+  }
+
   const token = await setup.getSetupToken()
   console.log(`  admin: http://localhost:${PORT}/setup.html?token=${token}`)
 })

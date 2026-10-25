@@ -252,7 +252,7 @@ const methods = {
    */
   prepareSend({
     sender, plaintext, description, recipientPublicKey, recipientPasskey,
-    releaser, acceptBy, releaseBy,
+    releaser, releaserPublicKey, acceptBy, releaseBy,
   }) {
     const prepared = prepareDelivery({
       sender,
@@ -261,6 +261,9 @@ const methods = {
       recipientPublicKey,
       recipientPasskey,
       releaser,
+      // Given, the half is sealed so the releaser can read it and release
+      // without the sender. Omitted, only the sender can ever open it.
+      releaserPublicKey,
       acceptBy,
       releaseBy,
       senderSecretKey: identity.privateKey,
@@ -271,6 +274,7 @@ const methods = {
       ciphertext: Array.from(prepared.ciphertext),
       description: Array.from(prepared.description),
       keptHalf: Array.from(prepared.keptHalf),
+      releaseMode: prepared.releaseMode,
     }
   },
 

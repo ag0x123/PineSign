@@ -27,6 +27,26 @@ So the ordering is not a policy anyone enforces. No acceptance, no `B`; no `B`, 
 no `K`, no plaintext. The gateway cannot shortcut it, and neither can the page the
 recipient is looking at.
 
+## Who holds the sender's half
+
+One choice, made per delivery, and it is the only trust decision a sender makes.
+
+**This server (default).** The sender's half is encrypted to the gateway, which releases
+it once the recipient's acceptance is final. The sender never has to be reachable again.
+The cost: the gateway can read that half, so a dishonest one could hand it to a recipient
+who never accepted. It cannot forge the acceptance — that is on chain, signed by a
+passkey — but it can let someone read a file without one.
+
+**The sender.** Her half is sealed to her own key and nobody else can open it, the
+gateway included. Nobody can leak it and nobody can release early. The cost: the
+recipient waits until she comes back and releases.
+
+Releasing is deliberately not prompt. `release` puts the half into transaction calldata,
+and calldata is public from the moment a transaction is broadcast — whether or not it
+succeeds. A release submitted against an acceptance that is later reorganised away
+therefore publishes the half for a delivery nobody accepted, and the revert does not take
+it back. So nothing is released until the block holding the acceptance is final.
+
 ## What is proven
 
 - **A passkey was tapped for this exact delivery.** The contract checks the signature
@@ -52,11 +72,10 @@ These are limits of the design, not things left to do.
   means "I accept delivery", not "I have read the file". This is registered post: you
   sign for the envelope. Nothing on chain can show what someone did with the bytes
   afterwards.
-- **The sender's half can be leaked.** Whoever holds `B` can hand it to anyone. By
-  default that is the sender, who has the file anyway — but a sender can also nominate
-  another releaser, and then that party is trusted not to release early. The gateway
-  stores `B` sealed under the sender's own key and cannot read it, which is why it is
-  not on this list.
+- **The sender's half can be leaked by whoever holds it.** In the default mode that is
+  this gateway, which is trusted not to hand it to a recipient who never accepted. A
+  sender who will not extend that trust releases herself, and then the only party who
+  can leak it is the one who has the file anyway. See *Who holds the sender's half*.
 - **A junk file is only provably junk off chain.** The commitment lets the recipient
   *detect* that what arrived is not what was described — but only after accepting. Their
   remedy is to show an arbitrator that the delivered bytes do not match, which this
@@ -118,7 +137,8 @@ Against a real chain:
 ```bash
 npm run check:p256       # is the P-256 precompile live where you are deploying
 npm run check:accept     # deploy, and verify a passkey assertion on chain
-npm run e2e              # one whole delivery, two passkeys, against Sepolia
+npm run e2e              # one whole delivery, two passkeys, sender releases
+npm run e2e:gateway      # the same, with the gateway releasing on finality
 ```
 
 Deploying: [docs/SETUP.md](docs/SETUP.md). The checks no suite can do — a real browser,

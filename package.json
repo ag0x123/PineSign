@@ -14,7 +14,8 @@
     "publish-page": "node scripts/publish-page.mjs",
     "check:p256": "node scripts/p256-precompile.mjs",
     "check:accept": "node scripts/accept-onchain.mjs",
-    "e2e": "node scripts/delivery-e2e.mjs"
+    "e2e": "node scripts/delivery-e2e.mjs",
+    "e2e:gateway": "E2E_RELEASE=gateway node scripts/delivery-e2e.mjs"
   },
   "dependencies": {
     "@ethersphere/bee-js": "^11.1.1",

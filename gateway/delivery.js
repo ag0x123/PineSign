@@ -59,8 +59,8 @@ const client = () => createPublicClient({ chain: sepolia, transport: http(RPC_UR
  * every acceptance and release. Falls back to the deployer so a single-wallet
  * deployment still works.
  */
-async function relayer() {
-  const key = process.env.RELAYER_PRIVATE_KEY ?? (await setup.deployerKey())
+async function relayer(privateKey = null) {
+  const key = privateKey ?? process.env.RELAYER_PRIVATE_KEY ?? (await setup.deployerKey())
   if (!key) {
     throw new Error(
       'this gateway has no key to relay with — set RELAYER_PRIVATE_KEY, or run setup so a deployer key exists',
@@ -125,8 +125,11 @@ export async function releaseDigest(id, releasedKey) {
  * error name comes back and nothing is spent on a request that was never
  * going to work.
  */
-async function send(functionName, args) {
-  const wallet = await relayer()
+async function send(functionName, args, { as = null } = {}) {
+  // `as` matters for one call: a direct release must come from the releaser
+  // the record names, which is not necessarily the key that relays everything
+  // else. Sending it from the wrong address reverts as NotReleaser.
+  const wallet = await relayer(as)
   const contract = { address: requireAddress(), abi: await abi() }
 
   try {
@@ -138,7 +141,13 @@ async function send(functionName, args) {
   const hash = await wallet.writeContract({ ...contract, functionName, args })
   const receipt = await client().waitForTransactionReceipt({ hash })
   if (receipt.status !== 'success') throw new Error(`${functionName} reverted on chain (${hash})`)
-  return { tx: hash, gasUsed: receipt.gasUsed.toString() }
+  return {
+    tx: hash,
+    gasUsed: receipt.gasUsed.toString(),
+    // The auto-releaser needs this: it waits for the block holding an
+    // acceptance to be final before putting the sender's half in calldata.
+    blockNumber: receipt.blockNumber.toString(),
+  }
 }
 
 /** The contract's own error name, wherever viem put it. */
@@ -179,9 +188,19 @@ export function relayAccept(id, assertion) {
   return send('accept', [id, assertion])
 }
 
-/** Carry a releaser's authorisation. We hold no half and sign nothing. */
+/** Carry a releaser's authorisation. Used when the sender releases herself. */
 export function relayRelease(id, releasedKey, signature) {
   return send('releaseSigned', [id, releasedKey, signature])
+}
+
+/**
+ * Release as the releaser, which this gateway is when a sender chose it.
+ *
+ * No signature: the contract takes `msg.sender`, and the record says this
+ * address is the one permitted to release.
+ */
+export function release(id, releasedKey, { as }) {
+  return send('release', [id, releasedKey], { as })
 }
 
 /** Put a lapse on the record. Open to anyone, including us. */

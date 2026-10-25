@@ -63,6 +63,30 @@
         nobody else can read it at all.
       </p>
 
+      <!--
+        Who releases, which is the one trust decision a sender makes here.
+        Stated as the trade it is rather than as a setting with a sensible
+        default and no explanation.
+      -->
+      <fieldset style="margin-top:14px;border:0;padding:0">
+        <legend class="hint" style="padding:0">Who releases the key</legend>
+        <label class="choice">
+          <input type="radio" name="releaseby" id="release-gateway" value="gateway" checked />
+          <span>
+            <strong>This server</strong> — it releases as soon as their acceptance is
+            final, so you need not come back. It can read your half, so it could in
+            principle hand it over early.
+          </span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="releaseby" id="release-self" value="self" />
+          <span>
+            <strong>You</strong> — nobody else can read your half or release it. You
+            have to return and release once they accept.
+          </span>
+        </label>
+      </fieldset>
+
       <label for="file" style="margin-top:14px">The file</label>
       <input id="file" type="file" />
       <p class="hint" id="file-name"></p>
@@ -77,7 +101,8 @@
         accept on chain and you release the second half of the key.
       </p>
       <a class="key" id="sent-link" href="#"></a>
-      <p class="hint mono" id="sent-tx" style="margin-top:10px"></p>
+      <p class="hint" id="sent-release" style="margin-top:10px"></p>
+      <p class="hint mono" id="sent-tx" style="margin-top:6px"></p>
     </section>
 
     <section class="panel" id="release-panel" hidden>

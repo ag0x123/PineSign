@@ -258,6 +258,13 @@ server = spawn('node', ['gateway/server.js'], {
     // The gateway relays, so it needs the funded key. In a real deployment
     // this is its own wallet with its own budget.
     RELAYER_PRIVATE_KEY: key,
+    RELEASE_PRIVATE_KEY: key,
+    // Confirmations rather than finality, so the run finishes in minutes
+    // instead of a quarter of an hour. The gate itself is what is being
+    // tested, not how long Sepolia takes to finalise.
+    RELEASE_FINALITY: process.env.E2E_FINALITY ?? 'confirmations',
+    RELEASE_CONFIRMATIONS: process.env.E2E_CONFIRMATIONS ?? '3',
+    RELEASE_POLL_MS: '5000',
     RATE_AUTH_PER_MIN: '1000',
     RATE_SEND_PER_MIN: '1000',
     RATE_CODE_PER_MIN: '1000',
@@ -335,6 +342,22 @@ ok(`${found.name}, with the credential a delivery will freeze`)
 
 // ---- Alice sends ----
 
+/**
+ * Which way the sender's half is handled. Both are exercised: the default,
+ * where this gateway holds it and releases on the acceptance, and the opt-in
+ * where only the sender can.
+ */
+const MODE = process.env.E2E_RELEASE ?? 'sender'
+if (!['sender', 'gateway'].includes(MODE)) fail(`E2E_RELEASE must be sender or gateway, got ${MODE}`)
+
+const gatewayReleaser = await must('/api/delivery/releaser', null, 'releaser')
+say(`Releasing by: ${MODE}`)
+if (MODE === 'gateway') {
+  ok(`this gateway, ${gatewayReleaser.address}, once ${gatewayReleaser.finality.mode}`)
+} else {
+  ok('alice herself, so nobody else can read her half')
+}
+
 say('Alice builds the delivery')
 const file = new TextEncoder().encode(`the quiet part, written down — ${new Date().toISOString()}`)
 const now = Math.floor(Date.now() / 1000)
@@ -344,11 +367,15 @@ const prepared = keysplit.prepareDelivery({
   description: 'one invoice, for the end-to-end',
   recipientPublicKey: found.pubKey,
   recipientPasskey: { x: found.passkeyX, y: found.passkeyY },
-  releaser: alice.address,
+  releaser: MODE === 'gateway' ? gatewayReleaser.address : alice.address,
+  releaserPublicKey: MODE === 'gateway' ? gatewayReleaser.publicKey : null,
   acceptBy: String(now + 3600),
   releaseBy: String(now + 7200),
   senderSecretKey: alice.secret,
 })
+if (prepared.releaseMode !== (MODE === 'gateway' ? 'releaser' : 'sender')) {
+  fail(`the half was sealed for ${prepared.releaseMode}, not for ${MODE}`)
+}
 ok(`id ${prepared.transferId}`)
 
 // The id the contract will derive must match the one A was salted with.
@@ -470,36 +497,70 @@ ok('and he still cannot open it')
 
 // ---- Alice releases ----
 
-say('Alice releases her half')
-const { keptHalf, transferId } = await must(
-  `/api/delivery/${prepared.transferId.slice(2)}/kept-half`,
-  await authAs(alice),
-  'kept half',
-)
-const half = keysplit.openSenderHalf({
-  secretKey: alice.secret,
-  transferId,
-  blob: new Uint8Array(keptHalf),
-})
-const releasedKey = `0x${hex(half)}`
+if (MODE === 'gateway') {
+  say('The gateway releases, once the acceptance is final')
 
-// Bob must not be able to get Alice's sealed half.
-const notBobs = await api(`/api/delivery/${prepared.transferId.slice(2)}/kept-half`, await authAs(bob))
-if (notBobs.status === 200) fail("bob was handed alice's sealed half")
-ok("bob cannot fetch alice's sealed half")
+  // Deliberately slow: the half goes into public calldata, so releasing
+  // against an acceptance that could still be reorganised away would publish
+  // it for a delivery nobody accepted.
+  const waitedFrom = Date.now()
+  let state = 'Accepted'
+  let lastReason = null
+  while (Date.now() - waitedFrom < 25 * 60 * 1000) {
+    const now_ = await must(`/api/delivery/${prepared.transferId.slice(2)}`, null, 'poll')
+    state = now_.state
+    if (state === 'Released') break
+    const reason = gatewayOutput.match(/release: [^\n]+/g)?.at(-1)
+    if (reason && reason !== lastReason) {
+      lastReason = reason
+      console.log(`   … ${reason}`)
+    }
+    if (Math.round((Date.now() - waitedFrom) / 1000) % 60 === 0) {
+      console.log(`   … still waiting for finality, ${Math.round((Date.now() - waitedFrom) / 1000)}s`)
+    }
+    await new Promise((r) => setTimeout(r, 15_000))
+  }
+  if (state !== 'Released') {
+    fail(`the gateway did not release within 25 minutes (state ${state}). Its output:\n${gatewayOutput.slice(-4000)}`)
+  }
+  ok('the gateway released it without Alice being involved')
 
-const { digest: releaseDigest } = await must(
-  `/api/delivery/${prepared.transferId.slice(2)}/release-digest/${releasedKey.slice(2)}`,
-  null,
-  'release digest',
-)
-const released = await must(
-  `/api/delivery/${prepared.transferId.slice(2)}/release`,
-  { releasedKey, signature: signRecoverable(fromHex(releaseDigest), alice.secret) },
-  'release',
-)
-if (released.state !== 'Released') fail(`expected Released, got ${released.state}`)
-ok(`released, ${released.gasUsed} gas, tx ${released.tx}`)
+  // Alice's half was never hers alone in this mode, and the route that hands
+  // it back is still hers alone.
+  const notBobs = await api(`/api/delivery/${prepared.transferId.slice(2)}/kept-half`, await authAs(bob))
+  if (notBobs.status === 200) fail("bob was handed the sealed half")
+  ok('and bob still cannot fetch the sealed half')
+} else {
+  say('Alice releases her half')
+  const { keptHalf, transferId } = await must(
+    `/api/delivery/${prepared.transferId.slice(2)}/kept-half`,
+    await authAs(alice),
+    'kept half',
+  )
+  const half = keysplit.openSenderHalf({
+    secretKey: alice.secret,
+    transferId,
+    blob: new Uint8Array(keptHalf),
+  })
+  const releasedKey = `0x${hex(half)}`
+
+  const notBobs = await api(`/api/delivery/${prepared.transferId.slice(2)}/kept-half`, await authAs(bob))
+  if (notBobs.status === 200) fail("bob was handed alice's sealed half")
+  ok("bob cannot fetch alice's sealed half")
+
+  const { digest: releaseDigest } = await must(
+    `/api/delivery/${prepared.transferId.slice(2)}/release-digest/${releasedKey.slice(2)}`,
+    null,
+    'release digest',
+  )
+  const released = await must(
+    `/api/delivery/${prepared.transferId.slice(2)}/release`,
+    { releasedKey, signature: signRecoverable(fromHex(releaseDigest), alice.secret) },
+    'release',
+  )
+  if (released.state !== 'Released') fail(`expected Released, got ${released.state}`)
+  ok(`released, ${released.gasUsed} gas, tx ${released.tx}`)
+}
 
 // ---- Bob opens ----
 
@@ -531,9 +592,9 @@ console.log(`
 Done, on Sepolia:
   contract   ${deployed.contractAddress}
   delivery   ${prepared.transferId}
+  released   by ${MODE}
   send       ${sent.gasUsed} gas
   accept     ${accepted.gasUsed} gas
-  release    ${released.gasUsed} gas
 
   https://sepolia.etherscan.io/address/${deployed.contractAddress}
 

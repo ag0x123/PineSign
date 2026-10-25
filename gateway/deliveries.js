@@ -36,7 +36,7 @@ async function persist() {
 
 export async function create({
   id, senderPubKey, senderName, recipientPubKey, recipientName, recipientEmail,
-  filename, size, swarmRef, descriptionRef, keptHalf, sentTx,
+  filename, size, swarmRef, descriptionRef, keptHalf, sentTx, releaseMode,
 }) {
   const all = await load()
   if (all[id]) throw new Error('that delivery is already recorded')
@@ -54,9 +54,19 @@ export async function create({
     size,
     swarmRef,
     descriptionRef,
-    // Opaque here. Only the sender's key opens it.
+    /**
+     * The sender's key half, sealed. Whether this process can open it is the
+     * sender's choice, recorded beside it:
+     *
+     *   'releaser'  sealed to this gateway, which releases on the acceptance.
+     *   'sender'    sealed to the sender, and opaque here.
+     */
     keptHalf,
+    releaseMode: releaseMode ?? 'sender',
     sentTx,
+    acceptBlock: null,
+    acceptTx: null,
+    releasedTx: null,
     createdAt: Date.now(),
   }
   await persist()
@@ -65,6 +75,32 @@ export async function create({
 
 export async function get(id) {
   return (await load())[id] ?? null
+}
+
+/**
+ * Note where an acceptance landed.
+ *
+ * The block number is what the auto-releaser waits on: `B` goes into public
+ * calldata, so a release must not be submitted against an acceptance that
+ * could still be reorganised away.
+ */
+export async function markAccepted(id, { tx, blockNumber }) {
+  const all = await load()
+  const record = all[id]
+  if (!record) return null
+  record.acceptTx = tx
+  record.acceptBlock = blockNumber != null ? String(blockNumber) : null
+  await persist()
+  return record
+}
+
+export async function markReleased(id, tx) {
+  const all = await load()
+  const record = all[id]
+  if (!record) return null
+  record.releasedTx = tx
+  await persist()
+  return record
 }
 
 export async function bySender(pubKey) {
