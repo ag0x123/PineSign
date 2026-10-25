@@ -11,7 +11,6 @@ import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as swarm from './swarm.js'
-import * as store from './store.js'
 import * as names from './names.js'
 import * as setup from './setup.js'
 import * as chain from './chain.js'
@@ -28,9 +27,8 @@ import * as pages from './pages.js'
 import { BEE_URL } from './bee.js'
 import * as delivery from './delivery.js'
 import * as deliveries from './deliveries.js'
-import { keccak256, toHex as viemHex } from 'viem'
 import { issueNonce, requireSignature } from './auth.js'
-import { transferDigest, verify, fromHex, toHex, addressFromPublicKey } from '../shared/crypto.js'
+import { fromHex, addressFromPublicKey } from '../shared/crypto.js'
 import { randomBytes } from 'node:crypto'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -442,7 +440,17 @@ app.post('/api/recipient', limitSend, requireSignature, async (req, res) => {
       // key rotated on chain is picked up without this server being involved.
       const record = await names.resolve(user.name)
       if (record?.pubKey) {
-        return res.json({ known: true, name: record.name, pubKey: record.pubKey })
+        return res.json({
+          known: true,
+          name: record.name,
+          pubKey: record.pubKey,
+          // The passkey a delivery freezes as the only credential that may
+          // accept it. Absent for anyone who last signed in before deliveries
+          // existed, and a sender needs to know that rather than discover it
+          // when the contract refuses their transaction.
+          passkeyX: user.credential?.x ?? null,
+          passkeyY: user.credential?.y ?? null,
+        })
       }
     }
 
@@ -552,90 +560,6 @@ app.get('/api/name/reverse/:pubKey', async (req, res) => {
 // Resolution is public by necessity; enumeration of every user is not.
 app.get('/api/names', setup.requireSetupToken, async (_req, res) => res.json(await names.list()))
 
-/**
- * Alice sends. She supplies ciphertext, the hash of the plaintext, and her
- * signature over the transfer digest — the sender half of the proof, committed
- * before Bob ever sees the file.
- */
-app.post('/api/send', limitSend, requireSignature, async (req, res) => {
-  try {
-    const { recipientPubKey, plaintextHash, senderSignature, filename, ciphertext } = req.body
-    if (!recipientPubKey || !plaintextHash || !senderSignature || !ciphertext) {
-      return res.status(400).json({ error: 'recipientPubKey, plaintextHash, senderSignature and ciphertext required' })
-    }
-
-    // The gate: only a named sender may spend the gateway's postage. The name
-    // is also what published the sender's key, so this is the same check as
-    // "is this someone the system can vouch for".
-    const senderName = await names.reverse(req.pubKey)
-    if (!senderName) {
-      return res.status(403).json({ error: 'claim a name before sending' })
-    }
-
-    const digest = transferDigest({
-      senderPubKey: req.pubKey,
-      recipientPubKey,
-      plaintextHash,
-    })
-    if (!verify(fromHex(senderSignature), digest, fromHex(req.pubKey))) {
-      return res.status(400).json({ error: 'sender signature does not match the transfer' })
-    }
-
-    const recipientName = await names.reverse(recipientPubKey)
-
-    const blob = Buffer.from(ciphertext, 'base64')
-    const reference = await swarm.upload(new Uint8Array(blob))
-
-    const id = randomBytes(16).toString('hex')
-    const transfer = await store.create({
-      id,
-      reference,
-      senderPubKey: req.pubKey,
-      senderName: senderName.name,
-      recipientPubKey,
-      recipientName: recipientName?.name ?? null,
-      plaintextHash,
-      senderSignature,
-      filename: filename ?? 'file',
-      size: blob.length,
-      digest: toHex(digest),
-    })
-
-    const claimUrl = `${publicOrigin(req)}/claim.html?id=${id}`
-
-    // The sender's half of the attestation, on chain, under a name that will
-    // resolve for as long as the parent does. The plaintext hash is committed
-    // to, not published — the recipient reveals it when they claim, which is
-    // what proves they decrypted rather than merely downloaded.
-    attest(id, {
-      'sender': senderName.name,
-      'sender.key': req.pubKey,
-      'sender.sig': senderSignature,
-      'recipient': recipientName?.name ?? '',
-      'recipient.key': recipientPubKey,
-      'file.name': filename ?? 'file',
-      'file.commitment': keccak256(fromHex(plaintextHash)),
-      'swarm': reference,
-      'sent': new Date().toISOString(),
-    }).catch((err) => console.log(`  attestation failed: ${err.message}`))
-
-    const recipientEmail = await invites.emailFor(recipientPubKey)
-    if (recipientEmail) {
-      mail.fileReady({
-        to: recipientEmail,
-        fromName: senderName.name,
-        filename: filename ?? 'a file',
-        link: claimUrl,
-        expires: new Date(transfer.expiresAt).toUTCString(),
-      }).catch((err) => console.log(`  mail failed: ${err.message}`))
-    }
-
-    res.json({ id, reference, expiresAt: transfer.expiresAt, claimUrl })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
 // ---- deliveries: the gateway carries, the contract decides ----
 
 /**
@@ -734,6 +658,10 @@ app.get('/api/delivery/:id', requireHexParam('id', { length: 64 }), async (req, 
       id,
       contract: delivery.ADDRESS,
       state: onChain.state,
+      // The relying party the acceptance must be signed under. Supplied
+      // because the contract stores only its hash, and a page guessing it from
+      // its own hostname would guess wrong the moment either name changed.
+      rpId: passkey.RP_ID,
       // The fields a recipient needs to derive their half and check the file.
       ephemeralX: onChain.ephemeralX,
       ephemeralOdd: onChain.ephemeralOdd,
@@ -892,104 +820,13 @@ app.post('/api/deliveries', requireSignature, async (req, res) => {
   )
 })
 
-/** Public record. Enough to verify the transfer; not enough to read the file. */
-app.get('/api/transfer/:id', requireHexParam('id', { length: 32 }), async (req, res) => {
-  const t = await store.get(req.params.id)
-  if (!t) return res.status(404).json({ error: 'no such transfer' })
-  res.json({
-    id: t.id,
-    senderPubKey: t.senderPubKey,
-    senderName: t.senderName ?? null,
-    recipientPubKey: t.recipientPubKey,
-    recipientName: t.recipientName ?? null,
-    // The hash is what the recipient must produce to claim. Publishing it up
-    // front would let anyone sign a receipt without ever opening the file, so
-    // before the claim only its commitment is visible.
-    fileCommitment: keccak256(fromHex(t.plaintextHash)),
-    plaintextHash: t.claim ? t.plaintextHash : null,
-    senderSignature: t.senderSignature,
-    filename: t.filename,
-    size: t.size,
-    reference: t.reference,
-    createdAt: t.createdAt,
-    expiresAt: t.expiresAt,
-    expired: Boolean(t.expired),
-    claim: t.claim,
-    attestation: `${t.id}.tx.${names.getParent()}`,
-  })
-})
-
-/** The ciphertext itself. Useless without Bob's private key. */
-app.get('/api/blob/:id', requireHexParam('id', { length: 32 }), async (req, res) => {
-  const t = await store.get(req.params.id)
-  if (!t) return res.status(404).json({ error: 'no such transfer' })
-  if (t.expired) return res.status(410).json({ error: 'transfer expired' })
-  try {
-    const bytes = await swarm.download(t.reference)
-    res.set('Content-Type', 'application/octet-stream').send(Buffer.from(bytes))
-  } catch (err) {
-    res.status(502).json({ error: `swarm fetch failed: ${err.message}` })
-  }
-})
-
 /**
- * Bob claims. His signature is over the same digest Alice signed, which he can
- * only produce after decrypting — so the pair of signatures is the receipt.
- */
-app.post('/api/claim', requireSignature, async (req, res) => {
-  try {
-    const { id, claimSignature, plaintextHash } = req.body
-    const t = await store.get(id)
-    if (!t) return res.status(404).json({ error: 'no such transfer' })
-    if (req.pubKey !== t.recipientPubKey) {
-      return res.status(403).json({ error: 'only the named recipient can claim' })
-    }
-
-    // Proof of decryption. The hash was never published — only its commitment —
-    // so the recipient can have it only by decrypting the file. Presenting it
-    // is what turns "downloaded" into "received".
-    if (!plaintextHash || plaintextHash.toLowerCase() !== t.plaintextHash.toLowerCase()) {
-      return res.status(400).json({ error: 'the file hash does not match — decrypt the file to claim it' })
-    }
-    if (!verify(fromHex(claimSignature), fromHex(t.digest), fromHex(req.pubKey))) {
-      return res.status(400).json({ error: 'claim signature does not match the transfer' })
-    }
-    const updated = await store.recordClaim(id, { recipientSignature: claimSignature })
-
-    // The recipient's half, and the freeze: from here the record is final.
-    finalizeAttestation(id, {
-      'file.hash': t.plaintextHash,
-      'recipient.sig': claimSignature,
-      'delivered': new Date().toISOString(),
-    }).catch((err) => console.log(`  attestation finalize failed: ${err.message}`))
-
-    const senderEmail = await invites.senderEmailFor(t.senderPubKey)
-    if (senderEmail) {
-      mail.delivered({
-        to: senderEmail,
-        recipientName: t.recipientName ?? 'the recipient',
-        filename: t.filename,
-        receiptLink: `${publicOrigin(req)}/claim.html?id=${id}`,
-      }).catch((err) => console.log(`  mail failed: ${err.message}`))
-    }
-
-    res.json({ ok: true, claim: updated.claim })
-  } catch (err) {
-    res.status(400).json({ error: err.message })
-  }
-})
-
-// The whole transfer log, admin only — it names every sender and recipient.
-/** The on-chain name a transfer's attestation lives under. */
-async function attestationName(id) {
-  const parent = names.getParent()
-  return `${id}.tx.${parent}`
-}
-
-/**
- * On-chain writes for one transfer happen strictly in order. A claim can arrive
- * seconds after a send, and the freeze must not overtake the record it seals —
- * nor may two transactions from one wallet contend for a nonce.
+ * On-chain writes share one wallet, so they go in order.
+ *
+ * Two transactions from one account contending for a nonce is a way to lose
+ * both of them. The queue is per subject and the lane is global: writes about
+ * one name cannot overtake each other, and no two writes from this wallet are
+ * ever in flight at once.
  */
 const chainQueue = new Map()
 function enqueue(id, work) {
@@ -1001,7 +838,7 @@ function enqueue(id, work) {
   return next
 }
 
-// One wallet, one nonce sequence: all attestations share a single lane.
+// One wallet, one nonce sequence: every write shares a single lane.
 let chainLane = Promise.resolve()
 function serialize(work) {
   const run = chainLane.then(work, work)
@@ -1030,40 +867,7 @@ function publishUser(record) {
   }))
 }
 
-function attest(id, records) {
-  return enqueue(id, () => serialize(async () => {
-    const resolver = await setup.resolverAddress()
-    const key = await setup.deployerKey()
-    if (!resolver || !key) return
-    const name = await attestationName(id)
-    const { tx } = await ens.writeRecords(key, { resolver, name, records })
-    console.log(`  attested ${name} ${tx}`)
-  }))
-}
-
-function finalizeAttestation(id, records) {
-  return enqueue(id, () => serialize(async () => {
-    const resolver = await setup.resolverAddress()
-    const key = await setup.deployerKey()
-    if (!resolver || !key) return
-    const name = await attestationName(id)
-    const { tx } = await ens.finalizeRecords(key, { resolver, name, records })
-    console.log(`  finalized ${name} ${tx}`)
-  }))
-}
-
-/** Read an attestation back from chain — what anyone can verify independently. */
-app.get('/api/attestation/:id', requireHexParam('id', { length: 32 }), async (req, res) => {
-  const resolver = await setup.resolverAddress()
-  if (!resolver) return res.status(404).json({ error: 'no resolver attached' })
-  const name = await attestationName(req.params.id)
-  const keys = ['sender', 'sender.key', 'sender.sig', 'recipient', 'recipient.key', 'file.name', 'file.commitment', 'file.hash', 'swarm', 'sent', 'recipient.sig', 'delivered']
-  const out = {}
-  for (const k of keys) out[k] = await ens.readRecord(resolver, name, k).catch(() => '')
-  res.json({ name, resolver, records: out })
-})
-
-app.get('/api/transfers', setup.requireSetupToken, async (_req, res) => res.json(await store.list()))
+app.get('/api/deliveries/all', setup.requireSetupToken, async (_req, res) => res.json(await deliveries.list()))
 
 // Bundles change on every deploy. Served with no-cache, the browser revalidates
 // each load (cheap, ETag) instead of running last week's code from its cache.

@@ -56,6 +56,13 @@
       <label for="from" style="margin-top:14px">Your email, for the receipt</label>
       <input id="from" type="text" placeholder="you@example.com" spellcheck="false" autocomplete="off" />
 
+      <label for="description" style="margin-top:14px">A short description</label>
+      <input id="description" type="text" placeholder="one invoice, 40kb" spellcheck="false" autocomplete="off" />
+      <p class="hint">
+        Encrypted to the recipient. They can read this before deciding whether to accept —
+        nobody else can read it at all.
+      </p>
+
       <label for="file" style="margin-top:14px">The file</label>
       <input id="file" type="file" />
       <p class="hint" id="file-name"></p>
@@ -65,8 +72,27 @@
 
     <section class="panel" id="sent" hidden>
       <h2>Sent</h2>
-      <p class="hint">Give them this link, or wait for the email we sent them.</p>
+      <p class="hint">
+        Give them this link, or wait for the email. They cannot open the file until they
+        accept on chain and you release the second half of the key.
+      </p>
       <a class="key" id="sent-link" href="#"></a>
+      <p class="hint mono" id="sent-tx" style="margin-top:10px"></p>
+    </section>
+
+    <section class="panel" id="release-panel" hidden>
+      <h2>Release the key</h2>
+      <dl class="facts">
+        <dt>File</dt><dd id="release-file">—</dd>
+        <dt>State</dt><dd id="release-state">—</dd>
+      </dl>
+      <p class="hint" id="release-note"></p>
+      <button class="primary" id="release-go" disabled>Release</button>
+    </section>
+
+    <section class="panel" id="outbox" hidden>
+      <h2>What you have sent</h2>
+      <ul class="inv-items" id="outbox-items"></ul>
     </section>
 
     <p class="status" id="status"></p>

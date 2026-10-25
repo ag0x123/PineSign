@@ -14,10 +14,7 @@
  * transfer. Plaintext and ciphertext cross the boundary; the key does not.
  */
 
-import {
-  deriveSharedKey, encrypt, decrypt, hashPlaintext, transferDigest, sign,
-  signRecoverable, toHex, fromHex, keccak256,
-} from '../../shared/crypto.js'
+import { sign, signRecoverable, toHex, fromHex } from '../../shared/crypto.js'
 import { createAndDerive, derive, bytesToBase64url, NoPrfError } from '../../shared/prf.js'
 import { assertOverDigest } from '../../shared/passkey-sign.js'
 import {
@@ -228,32 +225,6 @@ const methods = {
   },
 
   /**
-   * Encrypt a file for a recipient and sign for having sent it, in one call.
-   *
-   * The sender's half of the receipt is produced here, over the same digest the
-   * recipient will later sign — so the app cannot encrypt a file and then
-   * commit to a different one.
-   */
-  encryptFor({ plaintext, recipientPubKey }) {
-    const bytes = new Uint8Array(plaintext)
-    const sharedKey = deriveSharedKey(identity.privateKey, fromHex(recipientPubKey))
-    const ciphertext = encrypt(bytes, sharedKey)
-    const plaintextHash = toHex(hashPlaintext(bytes))
-
-    const digest = transferDigest({
-      senderPubKey: identity.publicKeyHex,
-      recipientPubKey,
-      plaintextHash,
-    })
-
-    return {
-      ciphertext: Array.from(ciphertext),
-      plaintextHash,
-      senderSignature: toHex(sign(digest, identity.privateKey)),
-    }
-  },
-
-  /**
    * Look at a delivery before agreeing to anything.
    *
    * Three things happen here and the order is the point. The recipient's key
@@ -304,22 +275,29 @@ const methods = {
   },
 
   /**
-   * Authorise the release of the sender's half.
+   * Open the sealed half, then authorise its release.
    *
-   * The sealed half comes back from wherever it was stored, is opened with the
-   * sender's key, and the signature is over the contract's own release digest —
-   * so a relayer can carry it and can change nothing about it. The sender needs
-   * no ether for this, which is the only reason they can be the default
-   * releaser at all.
+   * Two steps because the contract's release digest is a function of the half
+   * itself, so it cannot be asked for until the half is in hand. The signature
+   * is over that digest, so a relayer can carry the authorisation and can
+   * change nothing about it — and the sender needs no ether, which is the only
+   * reason they can be the default releaser at all.
    */
-  signRelease({ transferId, keptHalf, digest }) {
+  openKeptHalf({ transferId, keptHalf }) {
     const half = openSenderHalf({
       secretKey: identity.privateKey,
       transferId,
       blob: new Uint8Array(keptHalf),
     })
-    const signature = signRecoverable(fromHex(digest), identity.privateKey)
-    return { releasedKey: '0x' + toHex(half), signature }
+    // Handed back to the sender's own page, which then needs it to ask the
+    // contract for the matching release digest and to submit the release. The
+    // sender is the party releasing it, so this is not a leak — it is the
+    // point.
+    return { releasedKey: '0x' + toHex(half) }
+  },
+
+  signRelease({ digest }) {
+    return { signature: signRecoverable(fromHex(digest), identity.privateKey) }
   },
 
   /**
@@ -360,36 +338,6 @@ const methods = {
     return { plaintext: Array.from(opened.plaintext), plaintextHash: opened.plaintextHash }
   },
 
-  /**
-   * Decrypt a transfer and sign its receipt, in one call.
-   *
-   * One call on purpose: a page that could decrypt and then decline to sign
-   * would be able to read a file without leaving a receipt, which is the one
-   * thing this whole design exists to prevent.
-   */
-  openTransfer({ ciphertext, senderPubKey, expectedCommitment }) {
-    const sharedKey = deriveSharedKey(identity.privateKey, fromHex(senderPubKey))
-    const plaintext = decrypt(Uint8Array.from(ciphertext), sharedKey)
-
-    const plaintextHash = toHex(hashPlaintext(plaintext))
-    // The sender committed to keccak(hash), not to the hash itself — so the
-    // check is against the commitment, and the hash stays ours to reveal.
-    if (expectedCommitment && keccak256(fromHex(plaintextHash)) !== expectedCommitment.toLowerCase()) {
-      throw new Error('the decrypted file does not match what the sender committed to')
-    }
-
-    const digest = transferDigest({
-      senderPubKey,
-      recipientPubKey: identity.publicKeyHex,
-      plaintextHash,
-    })
-
-    return {
-      plaintext: Array.from(plaintext),
-      plaintextHash,
-      signature: toHex(sign(digest, identity.privateKey)),
-    }
-  },
 }
 
 addEventListener('message', (event) => {

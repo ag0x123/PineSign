@@ -118,16 +118,6 @@ export async function signer() {
   }
 }
 
-/** Encrypt a file for a recipient and sign for having sent it. */
-export function encryptFor({ plaintext, recipientPubKey }) {
-  return call('encryptFor', { plaintext: Array.from(plaintext), recipientPubKey })
-}
-
-/** Decrypt a transfer and sign its receipt — one step, so neither can be skipped. */
-export function openTransfer({ ciphertext, senderPubKey, expectedCommitment }) {
-  return call('openTransfer', { ciphertext: Array.from(ciphertext), senderPubKey, expectedCommitment })
-}
-
 // ---- deliveries ----
 //
 // The app reads the delivery from the chain and the ciphertext from Swarm, and
@@ -172,13 +162,18 @@ export function prepareSend(args) {
 /**
  * Authorise a release.
  *
- * `digest` must be the contract's own release digest and `keptHalf` the sealed
- * blob it was stored with. Comes back as a half and a signature that anyone
- * may carry — the sender needs no ether, which is what lets them be the
+ * Two steps: the sealed blob opens to the half, and the half is what the
+ * contract's release digest is computed from — so the digest cannot be asked
+ * for until the half is in hand. The signature over it may be carried by
+ * anyone, so the sender needs no ether, which is what lets them be the
  * releaser rather than some funded service holding everyone's halves.
  */
-export function signRelease({ transferId, keptHalf, digest }) {
-  return call('signRelease', { transferId, keptHalf: Array.from(keptHalf), digest })
+export function openKeptHalf({ transferId, keptHalf }) {
+  return call('openKeptHalf', { transferId, keptHalf: Array.from(keptHalf) })
+}
+
+export function signRelease({ digest }) {
+  return call('signRelease', { digest })
 }
 
 /**

@@ -44,22 +44,51 @@ export class Gateway {
     return this.#json('/api/health')
   }
 
-  async send(signer, payload) {
-    return this.#post('/api/send', { ...(await this.#auth(signer)), ...payload })
+  // ---- deliveries ----
+
+  /** Record a delivery the signing window has already built. */
+  async sendDelivery(signer, payload) {
+    return this.#post('/api/delivery', { ...(await this.#auth(signer)), ...payload })
   }
 
-  transfer(id) {
-    return this.#json(`/api/transfer/${id}`)
+  delivery(id) {
+    return this.#json(`/api/delivery/${strip(id)}`)
   }
 
-  async blob(id) {
-    const res = await fetch(`${this.baseUrl}/api/blob/${id}`)
+  async deliveryBlob(id) {
+    const res = await fetch(`${this.baseUrl}/api/delivery/${strip(id)}/blob`)
     if (!res.ok) throw new Error(`blob fetch failed: ${res.status}`)
     return new Uint8Array(await res.arrayBuffer())
   }
 
-  async claim(signer, id, claimSignature, plaintextHash) {
-    return this.#post('/api/claim', { ...(await this.#auth(signer)), id, claimSignature, plaintextHash })
+  /**
+   * Carry an acceptance. Unauthenticated by design: the assertion is the
+   * authentication and the contract is what checks it, so a recipient is not
+   * made to hold a session with this particular gateway.
+   */
+  acceptDelivery(id, assertion) {
+    return this.#post(`/api/delivery/${strip(id)}/accept`, { assertion })
+  }
+
+  /** The sender's sealed key half, back to the only party who can open it. */
+  async keptHalf(signer, id) {
+    return this.#post(`/api/delivery/${strip(id)}/kept-half`, await this.#auth(signer))
+  }
+
+  releaseDigest(id, releasedKey) {
+    return this.#json(`/api/delivery/${strip(id)}/release-digest/${strip(releasedKey)}`)
+  }
+
+  releaseDelivery(id, { releasedKey, signature }) {
+    return this.#post(`/api/delivery/${strip(id)}/release`, { releasedKey, signature })
+  }
+
+  expireDelivery(id) {
+    return this.#post(`/api/delivery/${strip(id)}/expire`, {})
+  }
+
+  async myDeliveries(signer) {
+    return this.#post('/api/deliveries', await this.#auth(signer))
   }
 
   // ---- names ----
@@ -108,6 +137,11 @@ export class Gateway {
       return null
     }
   }
+}
+
+/** Ids and keys travel with or without 0x; the routes want them without. */
+function strip(value) {
+  return String(value).replace(/^0x/, '')
 }
 
 export function toBase64(bytes) {

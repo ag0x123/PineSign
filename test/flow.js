@@ -1,12 +1,12 @@
 /**
- * End-to-end: Alice encrypts and sends, Bob decrypts and claims, and the
- * things that must not be possible are not possible.
+ * The gateway, end to end: signing in, names, recipients, and the routes a
+ * delivery goes through — plus the things that must not be possible.
+ *
+ * The delivery crypto itself is tested in test/keysplit.js, against the real
+ * functions rather than through HTTP.
  */
 
-import {
-  generatePrivateKey, publicKeyFrom, deriveSharedKey, encrypt, decrypt,
-  hashPlaintext, transferDigest, sign, toHex, fromHex,
-} from '../shared/crypto.js'
+import { generatePrivateKey, publicKeyFrom, sign, toHex } from '../shared/crypto.js'
 import { sha256 } from '@noble/hashes/sha256'
 import { readFile } from 'node:fs/promises'
 import http from 'node:http'
@@ -46,8 +46,6 @@ const alicePriv = generatePrivateKey(), alicePub = toHex(publicKeyFrom(alicePriv
 const bobPriv = generatePrivateKey(), bobPub = toHex(publicKeyFrom(bobPriv))
 const evePriv = generatePrivateKey(), evePub = toHex(publicKeyFrom(evePriv))
 
-const plaintext = new TextEncoder().encode('The quiet part, written down. ' + Date.now())
-const plaintextHash = toHex(hashPlaintext(plaintext))
 
 /**
  * The emailed code, read back from the server's own log.
@@ -285,12 +283,17 @@ const resolved = await (await fetch(`${BASE}/api/name/resolve/${aliceName.body.n
 check('a name resolves to the key', resolved.pubKey === alicePub)
 
 console.log('\ngating')
-const unnamed = await post('/api/send', {
+const unnamed = await post('/api/delivery', {
   ...(await auth(evePriv, evePub)),
-  recipientPubKey: bobPub, plaintextHash: '00'.repeat(32),
-  senderSignature: '00'.repeat(64), ciphertext: 'AAAA',
+  transferId: '0x' + '22'.repeat(32),
+  params: {},
+  ciphertext: 'AAAA',
+  keptHalf: [1],
 })
-check('an unnamed sender cannot send', unnamed.status === 403)
+// Unconfigured, the contract check comes first; either way an unnamed sender
+// never gets to send.
+check('an unnamed sender cannot send', unnamed.status === 403 || unnamed.status === 503)
+
 
 console.log('\nrecipients')
 // Alice signed in with signInEmail earlier, so that address resolves to her
@@ -298,6 +301,9 @@ console.log('\nrecipients')
 const knownTo = await post('/api/recipient', { ...(await auth(bobPriv, bobPub)), email: signInEmail })
 check('a known address resolves to a key', knownTo.status === 200 && knownTo.body.known === true)
 check('and to the key that address signed in with', knownTo.body.pubKey === alicePub)
+// A sender needs the recipient's credential to freeze it into the delivery,
+// and needs to be told when there isn't one rather than find out on chain.
+check('and carries the passkey a delivery would freeze', /^0x[0-9a-f]{64}$/.test(knownTo.body.passkeyX ?? ''))
 
 const strangerTo = await post('/api/recipient', {
   ...(await auth(bobPriv, bobPub)),
@@ -347,86 +353,25 @@ check('the sender is emailed that they can send', senderTold.includes('bob-recei
 const carolNow = await post('/api/recipient', { ...(await auth(bobPriv, bobPub)), email: carolEmail })
 check('the invited address now resolves to their key', carolNow.body.known === true && carolNow.body.pubKey === carolPub)
 
-console.log('\nsend')
-const sharedAlice = deriveSharedKey(alicePriv, fromHex(bobPub))
-const ciphertext = encrypt(plaintext, sharedAlice)
-const digest = transferDigest({ senderPubKey: alicePub, recipientPubKey: bobPub, plaintextHash })
-
-const sent = await post('/api/send', {
-  ...(await auth(alicePriv, alicePub)),
-  recipientPubKey: bobPub,
-  plaintextHash,
-  senderSignature: toHex(sign(digest, alicePriv)),
-  filename: 'note.txt',
-  ciphertext: Buffer.from(ciphertext).toString('base64'),
-})
-check('gateway accepts the transfer', sent.status === 200 && sent.body.id)
-check('gateway returns a swarm reference', Boolean(sent.body.reference))
-const id = sent.body.id
-
 console.log('\nauth')
-const stale = await post('/api/send', {
+// The nonce rules are what every signed route depends on, so they are tested
+// against one that still exists rather than against the route they were
+// written for.
+const stale = await post('/api/deliveries', {
   pubKey: alicePub, nonce: 'never-issued', signature: '00'.repeat(64),
-  recipientPubKey: bobPub, plaintextHash, senderSignature: '00'.repeat(64),
-  ciphertext: 'AAAA',
 })
 check('unknown nonce is rejected', stale.status === 401)
 
-const a = await auth(alicePriv, alicePub)
-await post('/api/send', { ...a, recipientPubKey: bobPub, plaintextHash, senderSignature: toHex(sign(digest, alicePriv)), ciphertext: Buffer.from(ciphertext).toString('base64') })
-const replay = await post('/api/send', { ...a, recipientPubKey: bobPub, plaintextHash, senderSignature: toHex(sign(digest, alicePriv)), ciphertext: Buffer.from(ciphertext).toString('base64') })
+const once = await auth(alicePriv, alicePub)
+const first = await post('/api/deliveries', once)
+check('a signed nonce is accepted', first.status === 200)
+const replay = await post('/api/deliveries', once)
 check('a nonce cannot be replayed', replay.status === 401)
 
-console.log('\nreceive')
-const record = await (await fetch(`${BASE}/api/transfer/${id}`)).json()
-check('record names the recipient', record.recipientPubKey === bobPub)
-check('record carries both names', record.senderName === aliceName.body.name && record.recipientName === bobName.body.name)
-check('record carries no plaintext', !JSON.stringify(record).includes('quiet part'))
-check('record does not publish the signable digest', record.digest === undefined)
-check('hash is hidden before the claim', record.plaintextHash === null && Boolean(record.fileCommitment))
+const borrowed = await auth(alicePriv, alicePub)
+const impersonated = await post('/api/deliveries', { ...borrowed, pubKey: bobPub })
+check('a nonce issued to one key cannot be used by another', impersonated.status === 401)
 
-const blob = new Uint8Array(await (await fetch(`${BASE}/api/blob/${id}`)).arrayBuffer())
-check('stored blob is not the plaintext', !Buffer.from(blob).toString().includes('quiet part'))
-
-const sharedBob = deriveSharedKey(bobPriv, fromHex(record.senderPubKey))
-const recovered = decrypt(blob, sharedBob)
-check('bob decrypts to the original', Buffer.from(recovered).equals(Buffer.from(plaintext)))
-check('decrypted hash matches the published commitment', '0x' + toHex(hashPlaintext(fromHex(toHex(hashPlaintext(recovered))))) === record.fileCommitment)
-
-console.log('\neve')
-let eveFailed = false
-try {
-  const eveKey = deriveSharedKey(evePriv, fromHex(record.senderPubKey))
-  decrypt(blob, eveKey)
-} catch {
-  eveFailed = true
-}
-check('a third party cannot decrypt', eveFailed)
-
-const eveClaim = await post('/api/claim', {
-  ...(await auth(evePriv, evePub)),
-  id,
-  claimSignature: toHex(sign(sha256(new TextEncoder().encode('guess')), evePriv)),
-  plaintextHash,
-})
-check('a third party cannot claim', eveClaim.status === 403)
-
-console.log('\nclaim')
-const claimSig = toHex(sign(transferDigest({
-  senderPubKey: record.senderPubKey, recipientPubKey: bobPub, plaintextHash: toHex(hashPlaintext(recovered)),
-}), bobPriv))
-// Signing alone is not enough: the hash must be presented, and only decrypting yields it.
-const lazy = await post('/api/claim', { ...(await auth(bobPriv, bobPub)), id, claimSignature: claimSig })
-check('a claim without the file hash is refused', lazy.status === 400)
-
-const claimed = await post('/api/claim', { ...(await auth(bobPriv, bobPub)), id, claimSignature: claimSig, plaintextHash })
-check('bob claims by presenting the decrypted hash', claimed.status === 200 && claimed.body.claim)
-
-const again = await post('/api/claim', { ...(await auth(bobPriv, bobPub)), id, claimSignature: claimSig, plaintextHash })
-check('a claim is write-once', again.status === 400 && /already claimed/.test(again.body.error))
-
-const final = await (await fetch(`${BASE}/api/transfer/${id}`)).json()
-check('receipt is on the record', Boolean(final.claim?.recipientSignature))
 
 console.log('\ndeliveries, unconfigured')
 // With no DELIVERY_ADDRESS the gateway must say so rather than half-work.

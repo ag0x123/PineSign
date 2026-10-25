@@ -29,18 +29,18 @@
     </div>
 
     <section class="panel" id="details" hidden>
-      <h2>The transfer</h2>
+      <h2>The delivery</h2>
       <dl class="facts">
         <dt>File</dt><dd id="f-name">—</dd>
         <dt>Size</dt><dd id="f-size">—</dd>
-        <dt>From</dt><dd class="mono" id="f-sender">—</dd>
-        <dt>Stored at</dt><dd class="mono" id="f-ref">—</dd>
-        <dt>Expires</dt><dd id="f-expires">—</dd>
+        <dt>From</dt><dd id="f-sender">—</dd>
+        <dt>State</dt><dd id="f-state">—</dd>
+        <dt>Contract</dt><dd class="mono" id="f-contract">—</dd>
       </dl>
     </section>
 
     <section class="panel" id="signin-panel" hidden>
-      <h2>Sign in to open it</h2>
+      <h2>Sign in to look at it</h2>
       <p class="hint">
         A code to your email, then your passkey. Your key is derived in the sign-in window
         and stays there — this page never sees it.
@@ -50,19 +50,58 @@
 
     <section class="panel" id="identity-panel" hidden>
       <h2>Your key</h2>
-      <p class="hint" id="identity-hint">This is the key that will open the file.</p>
+      <p class="hint" id="identity-hint">This is the key the file is addressed to.</p>
       <code class="key" id="pubkey">…</code>
-      <p class="hint" id="key-mode" style="margin-top:10px"></p>
     </section>
 
-    <section class="panel" id="action-panel" hidden>
+    <section class="panel" id="inspected" hidden>
+      <h2>What you are being sent</h2>
+      <dl class="facts">
+        <dt>Described as</dt><dd id="d-description">—</dd>
+        <dt>Stored file</dt><dd class="mono" id="d-stored">—</dd>
+      </dl>
+      <p class="hint">
+        The stored file has been fetched and checked against what the sender committed to.
+        You cannot read it yet: half the key is on chain only after you accept.
+      </p>
+    </section>
+
+    <section class="panel" id="accept-panel" hidden>
       <h2>Accept</h2>
       <p class="hint">
-        Accepting decrypts the file on this device and writes a receipt that cannot be
-        edited or withdrawn — by you or by the sender.
+        Accepting records a receipt on Ethereum, signed by your passkey. The sender then
+        releases the other half of the key and the file opens.
       </p>
-      <button class="primary wide" id="accept">Accept and download</button>
-      <p class="status" id="status"></p>
+      <button class="primary" id="accept">Accept with passkey</button>
+    </section>
+
+    <section class="panel" id="waiting-panel" hidden>
+      <h2>Accepted</h2>
+      <p class="hint">
+        Your acceptance is on chain. The sender has been told, and releases the second half
+        of the key when they are ready.
+      </p>
+      <p class="hint mono" id="accept-tx"></p>
+      <button class="ghost" id="refresh">Check again</button>
+    </section>
+
+    <section class="panel" id="open-panel" hidden>
+      <h2>Open it</h2>
+      <p class="hint">Both halves exist now. The file decrypts in the sign-in window.</p>
+      <button class="primary" id="open">Decrypt and download</button>
+    </section>
+
+    <section class="panel" id="receipt" hidden>
+      <h2>Receipt</h2>
+      <dl class="facts">
+        <dt>File hash</dt><dd class="mono" id="r-hash">—</dd>
+      </dl>
+      <p class="hint">
+        It decrypted to exactly what the sender committed to before you accepted.
+      </p>
+    </section>
+
+    <p class="status" id="status"></p>
 
       <div class="receipt" id="receipt" hidden>
         <h3>Delivered</h3>
