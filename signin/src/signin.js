@@ -283,6 +283,11 @@ const methods = {
    * change nothing about it — and the sender needs no ether, which is the only
    * reason they can be the default releaser at all.
    */
+  /** The sender's authorisation for their own send, relayed by the gateway. */
+  signSend({ digest }) {
+    return { signature: signRecoverable(fromHex(digest), identity.privateKey) }
+  },
+
   openKeptHalf({ transferId, keptHalf }) {
     const half = openSenderHalf({
       secretKey: identity.privateKey,

@@ -436,6 +436,9 @@ export function prepareDelivery({
   return {
     transferId: id,
     params: {
+      // Who is sending, which the contract takes from here rather than from
+      // whoever relays the transaction.
+      sender,
       releaser,
       passkeyX: recipientPasskey.x,
       passkeyY: recipientPasskey.y,

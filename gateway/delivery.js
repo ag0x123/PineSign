@@ -51,9 +51,21 @@ function requireAddress() {
 
 const client = () => createPublicClient({ chain: sepolia, transport: http(RPC_URL) })
 
+/**
+ * The key that pays for relaying.
+ *
+ * Separate from the ENS deployer by default, because they are different
+ * budgets: the deployer buys names and resolvers once, the relayer pays for
+ * every acceptance and release. Falls back to the deployer so a single-wallet
+ * deployment still works.
+ */
 async function relayer() {
-  const key = await setup.deployerKey()
-  if (!key) throw new Error('this gateway has no key to relay with — run setup first')
+  const key = process.env.RELAYER_PRIVATE_KEY ?? (await setup.deployerKey())
+  if (!key) {
+    throw new Error(
+      'this gateway has no key to relay with — set RELAYER_PRIVATE_KEY, or run setup so a deployer key exists',
+    )
+  }
   return createWalletClient({
     account: privateKeyToAccount(key),
     chain: sepolia,
@@ -138,8 +150,28 @@ function reason(err) {
   return null
 }
 
-export function sendDelivery(params) {
-  return send('send', [params])
+/** Carry a sender's own send. The signature is theirs; we only pay for it. */
+export function sendDelivery(params, signature) {
+  return send('send', [params, signature])
+}
+
+export async function sendDigest(id, releaseCommitment, descriptionHash, releaser) {
+  return client().readContract({
+    address: requireAddress(),
+    abi: await abi(),
+    functionName: 'sendDigest',
+    args: [id, releaseCommitment, descriptionHash, releaser],
+  })
+}
+
+/** The id the contract will derive, so a caller can check it agrees. */
+export async function transferId(params) {
+  return client().readContract({
+    address: requireAddress(),
+    abi: await abi(),
+    functionName: 'transferId',
+    args: [params],
+  })
 }
 
 /** Carry a recipient's acceptance. The contract verifies the passkey, not us. */

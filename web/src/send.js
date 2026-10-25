@@ -12,7 +12,7 @@
 
 import { Gateway, toBase64 } from '../../shared/client.js'
 import {
-  signIn, signedIn, current, prepareSend, openKeptHalf, signRelease, signer,
+  signIn, signedIn, current, prepareSend, signSend, openKeptHalf, signRelease, signer,
 } from '../../shared/keysource.js'
 
 const el = (id) => document.getElementById(id)
@@ -159,10 +159,17 @@ el('send').addEventListener('click', async () => {
       releaseBy: String(now + RELEASE_WINDOW_S),
     })
 
+    // The sender authorises their own send, so the gateway carries something
+    // it cannot alter and cannot send as anyone else.
+    say('Authorising the send…')
+    const { digest } = await gateway.sendDigest(await signer(), prepared.params)
+    const { signature: authorisation } = await signSend({ digest })
+
     say('Storing the file and recording the delivery…')
     const sent = await gateway.sendDelivery(await signer(), {
       transferId: prepared.transferId,
       params: prepared.params,
+      authorisation,
       recipientPubKey: recipient.pubKey,
       ciphertext: toBase64(Uint8Array.from(prepared.ciphertext)),
       description: toBase64(Uint8Array.from(prepared.description)),

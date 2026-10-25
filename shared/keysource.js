@@ -168,6 +168,11 @@ export function prepareSend(args) {
  * anyone, so the sender needs no ether, which is what lets them be the
  * releaser rather than some funded service holding everyone's halves.
  */
+/** Authorise a send. The digest is the contract's, read through the gateway. */
+export function signSend({ digest }) {
+  return call('signSend', { digest })
+}
+
 export function openKeptHalf({ transferId, keptHalf }) {
   return call('openKeptHalf', { transferId, keptHalf: Array.from(keptHalf) })
 }

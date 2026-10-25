@@ -30,6 +30,10 @@ export class Gateway {
   /**
    * A fresh nonce, signed — the gateway's proof of who is asking.
    *
+   * The field is `signature`, so no payload may use that name: spreading a
+   * payload over this would replace the nonce signature with something else
+   * and the request would fail as "bad signature" with nothing to suggest why.
+   *
    * The signer is handed the nonce rather than a digest. It builds the digest
    * itself, so whatever holds the key only ever signs things it recognises,
    * never an opaque 32 bytes this code chose.
@@ -45,6 +49,11 @@ export class Gateway {
   }
 
   // ---- deliveries ----
+
+  /** The digest the sender signs, computed by the contract. */
+  async sendDigest(signer, params) {
+    return this.#post('/api/delivery/send-digest', { ...(await this.#auth(signer)), params })
+  }
 
   /** Record a delivery the signing window has already built. */
   async sendDelivery(signer, payload) {

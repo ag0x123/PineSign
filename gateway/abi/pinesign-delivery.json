@@ -390,6 +390,11 @@
           "internalType": "struct PineSignDelivery.SendParams",
           "components": [
             {
+              "name": "sender",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
               "name": "releaser",
               "type": "address",
               "internalType": "address"
@@ -460,6 +465,11 @@
               "internalType": "uint64"
             }
           ]
+        },
+        {
+          "name": "signature",
+          "type": "bytes",
+          "internalType": "bytes"
         }
       ],
       "outputs": [
@@ -470,6 +480,40 @@
         }
       ],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "sendDigest",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "releaseCommitment",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "descriptionHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "releaser",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -514,15 +558,15 @@
       "name": "transferId",
       "inputs": [
         {
-          "name": "sender",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
           "name": "p",
           "type": "tuple",
           "internalType": "struct PineSignDelivery.SendParams",
           "components": [
+            {
+              "name": "sender",
+              "type": "address",
+              "internalType": "address"
+            },
             {
               "name": "releaser",
               "type": "address",

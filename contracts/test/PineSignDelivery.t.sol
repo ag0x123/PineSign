@@ -6,6 +6,39 @@ import {PineSignDelivery} from "../src/PineSignDelivery.sol";
 import {WebAuthn} from "../src/WebAuthn.sol";
 
 /**
+ * Shared plumbing: a send is authorised by the sender's signature, so every
+ * suite below needs a key rather than a bare address and a way to sign with it.
+ */
+abstract contract DeliveryTest is Test {
+    /**
+     * Note on ordering, which has bitten this file twice.
+     *
+     * `sendSig` reads the digest from the contract, so it is an external call.
+     * Passed as an argument to a call wrapped in `vm.expectRevert` or
+     * `vm.prank`, it spends the cheatcode on itself — the revert is matched
+     * against the digest read and the test fails for the wrong reason. So
+     * signatures are always computed into a local first.
+     */
+    function signFor(uint256 key, bytes32 digest) internal pure returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// The sender's authorisation for one set of parameters.
+    function sendSig(PineSignDelivery d, PineSignDelivery.SendParams memory p, uint256 key)
+        internal
+        view
+        returns (bytes memory)
+    {
+        address releaser = p.releaser == address(0) ? p.sender : p.releaser;
+        return signFor(
+            key,
+            d.sendDigest(d.transferId(p), p.releaseCommitment, p.descriptionHash, releaser)
+        );
+    }
+}
+
+/**
  * The delivery state machine.
  *
  * One thing is missing from this suite and it is missing on purpose: a passkey
@@ -15,10 +48,11 @@ import {WebAuthn} from "../src/WebAuthn.sol";
  * state and timing check that guards it, and the fact that a bad assertion is
  * refused — and the signature itself is proven by a real Sepolia transaction.
  */
-contract PineSignDeliveryTest is Test {
+contract PineSignDeliveryTest is DeliveryTest {
     PineSignDelivery delivery;
 
-    address alice = address(0xA11CE);
+    uint256 aliceKey = 0xA11CE;
+    address alice = vm.addr(0xA11CE);
     address releaser = address(0xBEEF);
     address relayer = address(0xDEAD);
 
@@ -63,6 +97,7 @@ contract PineSignDeliveryTest is Test {
 
     function buildParams() internal view returns (PineSignDelivery.SendParams memory) {
         return PineSignDelivery.SendParams({
+            sender: alice,
             releaser: releaser,
             passkeyX: bytes32(uint256(0x1111)),
             passkeyY: bytes32(uint256(0x2222)),
@@ -83,7 +118,7 @@ contract PineSignDeliveryTest is Test {
     function sendOne() internal returns (bytes32) {
         PineSignDelivery.SendParams memory p = params();
         vm.prank(alice);
-        return delivery.send(p);
+        return delivery.send(p, sendSig(delivery, p, aliceKey));
     }
 
     /// An assertion that is well-formed but cannot verify without a precompile.
@@ -123,19 +158,19 @@ contract PineSignDeliveryTest is Test {
         PineSignDelivery.SendParams memory p = params();
         p.releaser = address(0);
         vm.prank(alice);
-        bytes32 id = delivery.send(p);
+        bytes32 id = delivery.send(p, sendSig(delivery, p, aliceKey));
         assertEq(delivery.get(id).releaser, alice);
     }
 
     function test_idIsDerivedNotChosen() public {
         bytes32 id = sendOne();
-        assertEq(id, delivery.transferId(alice, params()));
+        assertEq(id, delivery.transferId(params()));
     }
 
     function test_oneFieldChangedIsADifferentTransfer() public {
         PineSignDelivery.SendParams memory p = params();
         p.ciphertextHash = keccak256("a different ciphertext");
-        assertTrue(delivery.transferId(alice, p) != delivery.transferId(alice, params()));
+        assertTrue(delivery.transferId(p) != delivery.transferId(params()));
     }
 
     function test_sendIsWriteOnce() public {
@@ -143,59 +178,66 @@ contract PineSignDeliveryTest is Test {
         PineSignDelivery.SendParams memory p = params();
         // The same params from the same sender reuse the ephemeral key, which
         // is refused before the duplicate id is even reached.
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
         vm.prank(alice);
         vm.expectRevert(PineSignDelivery.EphemeralReused.selector);
-        delivery.send(p);
+        delivery.send(p, authorised);
     }
 
     function test_aReusedEphemeralKeyIsRefused() public {
         sendOne();
         PineSignDelivery.SendParams memory p = params();
         p.ciphertextHash = keccak256("another file entirely");
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
         vm.prank(alice);
         vm.expectRevert(PineSignDelivery.EphemeralReused.selector);
-        delivery.send(p);
+        delivery.send(p, authorised);
     }
 
     function test_aFreshEphemeralKeyIsFine() public {
         sendOne();
         PineSignDelivery.SendParams memory p = params();
         p.ephemeralX = bytes32(uint256(0x5555));
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
         vm.prank(alice);
-        delivery.send(p);
+        delivery.send(p, authorised);
     }
 
     function test_deadlinesMustBeOrdered() public {
         PineSignDelivery.SendParams memory p = params();
         p.releaseBy = p.acceptBy;
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
         vm.prank(alice);
         vm.expectRevert(PineSignDelivery.DeadlinesOutOfOrder.selector);
-        delivery.send(p);
+        delivery.send(p, authorised);
     }
 
     function test_anAcceptDeadlineInThePastIsRefused() public {
         PineSignDelivery.SendParams memory p = params();
         p.acceptBy = uint64(block.timestamp);
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
         vm.prank(alice);
         vm.expectRevert(PineSignDelivery.AcceptWindowClosed.selector);
-        delivery.send(p);
+        delivery.send(p, authorised);
     }
 
     function test_anEmptyReleaseCommitmentIsRefused() public {
         PineSignDelivery.SendParams memory p = params();
         p.releaseCommitment = bytes32(0);
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
         vm.prank(alice);
         vm.expectRevert(PineSignDelivery.EmptyField.selector);
-        delivery.send(p);
+        delivery.send(p, authorised);
     }
 
     function test_anEmptyPasskeyIsRefused() public {
         PineSignDelivery.SendParams memory p = params();
         p.passkeyX = bytes32(0);
         p.passkeyY = bytes32(0);
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
         vm.prank(alice);
         vm.expectRevert(PineSignDelivery.EmptyField.selector);
-        delivery.send(p);
+        delivery.send(p, authorised);
     }
 
     // ---- accept ----
@@ -356,10 +398,11 @@ contract DeliveryHarness is PineSignDelivery {
     }
 }
 
-contract PineSignDeliveryAfterAcceptTest is Test {
+contract PineSignDeliveryAfterAcceptTest is DeliveryTest {
     DeliveryHarness delivery;
 
-    address alice = address(0xA11CE);
+    uint256 aliceKey = 0xA11CE;
+    address alice = vm.addr(0xA11CE);
     address releaser = address(0xBEEF);
     address relayer = address(0xDEAD);
 
@@ -387,6 +430,7 @@ contract PineSignDeliveryAfterAcceptTest is Test {
         acceptBy = uint64(block.timestamp + 1 days);
         releaseBy = uint64(block.timestamp + 2 days);
         baseParams = PineSignDelivery.SendParams({
+            sender: alice,
             releaser: releaser,
             passkeyX: bytes32(uint256(0x1111)),
             passkeyY: bytes32(uint256(0x2222)),
@@ -407,7 +451,7 @@ contract PineSignDeliveryAfterAcceptTest is Test {
     function accepted() internal returns (bytes32 id) {
         PineSignDelivery.SendParams memory p = baseParams;
         vm.prank(alice);
-        id = delivery.send(p);
+        id = delivery.send(p, sendSig(delivery, p, aliceKey));
         delivery.markAccepted(id);
     }
 
@@ -427,7 +471,7 @@ contract PineSignDeliveryAfterAcceptTest is Test {
     function test_bIsAbsentUntilRelease() public {
         PineSignDelivery.SendParams memory p = baseParams;
         vm.prank(alice);
-        bytes32 id = delivery.send(p);
+        bytes32 id = delivery.send(p, sendSig(delivery, p, aliceKey));
         assertEq(delivery.get(id).releasedKey, bytes32(0));
 
         delivery.markAccepted(id);
@@ -554,7 +598,7 @@ contract PineSignDeliveryAfterAcceptTest is Test {
  * one — because a sender who could nominate it could have an "acceptance"
  * signed on a page of their own choosing.
  */
-contract PineSignDeliveryOriginTest is Test {
+contract PineSignDeliveryOriginTest is DeliveryTest {
     /// In storage rather than `constant`: see the note in the first suite.
     bytes32 rpIdHash = sha256("id.example.com");
     bytes32 constant ALLOWED = keccak256("https://v1.id.example.com");
@@ -609,8 +653,12 @@ contract PineSignDeliveryOriginTest is Test {
     function test_anUnlistedOriginIsRefusedBeforeVerifying() public {
         PineSignDelivery d = deploy();
 
+        // A real key, because a send is authorised by the sender's signature
+        // and address(this) cannot produce one.
+        uint256 senderKey = 0xDEADBEEF;
         PineSignDelivery.SendParams memory p = PineSignDelivery.SendParams({
-            releaser: address(this),
+            sender: vm.addr(senderKey),
+            releaser: vm.addr(senderKey),
             passkeyX: bytes32(uint256(0x1111)),
             passkeyY: bytes32(uint256(0x2222)),
             pkBX: bytes32(uint256(0x3333)),
@@ -625,7 +673,7 @@ contract PineSignDeliveryOriginTest is Test {
             acceptBy: uint64(block.timestamp + 1 days),
             releaseBy: uint64(block.timestamp + 2 days)
         });
-        bytes32 id = d.send(p);
+        bytes32 id = d.send(p, sendSig(d, p, senderKey));
 
         bytes memory authData = new bytes(37);
         authData[32] = 0x05;
@@ -669,9 +717,10 @@ contract PineSignDeliveryOriginTest is Test {
  * The id does not cover `releaseCommitment`, so the digest has to — otherwise
  * an acceptance would not name the key half it was given in exchange for.
  */
-contract PineSignDeliveryDigestTest is Test {
+contract PineSignDeliveryDigestTest is DeliveryTest {
     DeliveryHarness delivery;
-    address alice = address(0xA11CE);
+    uint256 aliceKey = 0xA11CE;
+    address alice = vm.addr(0xA11CE);
     address releaser = address(0xBEEF);
     bytes32 constant B = keccak256("the half the sender holds back");
     bytes32 rpIdHash = sha256("id.example.com");
@@ -684,6 +733,7 @@ contract PineSignDeliveryDigestTest is Test {
         delivery = new DeliveryHarness(rpIdHash, origins);
         vm.warp(1_700_000_000);
         baseParams = PineSignDelivery.SendParams({
+            sender: alice,
             releaser: releaser,
             passkeyX: bytes32(uint256(0x1111)),
             passkeyY: bytes32(uint256(0x2222)),
@@ -703,7 +753,7 @@ contract PineSignDeliveryDigestTest is Test {
 
     function sendWith(PineSignDelivery.SendParams memory p) internal returns (bytes32) {
         vm.prank(alice);
-        return delivery.send(p);
+        return delivery.send(p, sendSig(delivery, p, aliceKey));
     }
 
     /**
@@ -719,13 +769,13 @@ contract PineSignDeliveryDigestTest is Test {
 
         PineSignDelivery.SendParams memory second = baseParams;
         second.releaseCommitment = keccak256(abi.encode(keccak256("a different half")));
-        assertEq(delivery.transferId(alice, second), id1, "the id cannot tell these apart");
+        assertEq(delivery.transferId(second), id1, "the id cannot tell these apart");
 
         // The same id is already taken, so this is the proof that matters:
         // the digest is a function of the committed half, not just the id.
         DeliveryHarness other = new DeliveryHarness(rpIdHash, originList());
         vm.prank(alice);
-        bytes32 id2 = other.send(second);
+        bytes32 id2 = other.send(second, sendSig(other, second, aliceKey));
         assertEq(id2, id1, "same id on a fresh deployment");
         assertTrue(other.acceptDigest(id2) != digest1, "the digest must differ");
     }
@@ -741,7 +791,7 @@ contract PineSignDeliveryDigestTest is Test {
         moved.swarmRef = keccak256("somewhere else");
         DeliveryHarness other = new DeliveryHarness(rpIdHash, originList());
         vm.prank(alice);
-        assertTrue(other.acceptDigest(other.send(moved)) != digest);
+        assertTrue(other.acceptDigest(other.send(moved, sendSig(other, moved, aliceKey))) != digest);
     }
 
     function test_theDigestCoversTheReleaser() public {
@@ -750,7 +800,7 @@ contract PineSignDeliveryDigestTest is Test {
         swapped.releaser = address(0xC0FFEE);
         DeliveryHarness other = new DeliveryHarness(rpIdHash, originList());
         vm.prank(alice);
-        assertTrue(other.acceptDigest(other.send(swapped)) != digest);
+        assertTrue(other.acceptDigest(other.send(swapped, sendSig(other, swapped, aliceKey))) != digest);
     }
 
     /**
@@ -802,7 +852,7 @@ contract PineSignDeliveryDigestTest is Test {
  * and has no ether. So the signature path is not a convenience — it is what
  * makes the stated default possible at all.
  */
-contract PineSignDeliveryReleaseSignedTest is Test {
+contract PineSignDeliveryReleaseSignedTest is DeliveryTest {
     DeliveryHarness delivery;
 
     uint256 aliceKey = 0xA11CE;
@@ -821,6 +871,7 @@ contract PineSignDeliveryReleaseSignedTest is Test {
         delivery = new DeliveryHarness(rpIdHash, origins);
         vm.warp(1_700_000_000);
         baseParams = PineSignDelivery.SendParams({
+            sender: alice,
             releaser: alice, // the sender releases, which is the default
             passkeyX: bytes32(uint256(0x1111)),
             passkeyY: bytes32(uint256(0x2222)),
@@ -838,17 +889,12 @@ contract PineSignDeliveryReleaseSignedTest is Test {
         });
         PineSignDelivery.SendParams memory p = baseParams;
         vm.prank(alice);
-        id = delivery.send(p);
+        id = delivery.send(p, sendSig(delivery, p, aliceKey));
         delivery.markAccepted(id);
     }
 
-    function sign(uint256 key, bytes32 digest) internal pure returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
-        return abi.encodePacked(r, s, v);
-    }
-
     function test_anyoneMayCarryTheReleasersSignature() public {
-        bytes memory signature = sign(aliceKey, delivery.releaseDigest(id, B));
+        bytes memory signature = signFor(aliceKey, delivery.releaseDigest(id, B));
 
         // Alice holds no ether and never submits anything herself.
         vm.prank(relayer);
@@ -859,7 +905,7 @@ contract PineSignDeliveryReleaseSignedTest is Test {
     }
 
     function test_aRelayerCannotChangeWhichHalfIsReleased() public {
-        bytes memory signature = sign(aliceKey, delivery.releaseDigest(id, B));
+        bytes memory signature = signFor(aliceKey, delivery.releaseDigest(id, B));
         vm.prank(relayer);
         vm.expectRevert(PineSignDelivery.NotReleaser.selector);
         // A different half means a different digest, so the signature recovers
@@ -868,13 +914,13 @@ contract PineSignDeliveryReleaseSignedTest is Test {
     }
 
     function test_somebodyElsesSignatureIsRefused() public {
-        bytes memory signature = sign(0xB0B, delivery.releaseDigest(id, B));
+        bytes memory signature = signFor(0xB0B, delivery.releaseDigest(id, B));
         vm.expectRevert(PineSignDelivery.NotReleaser.selector);
         delivery.releaseSigned(id, B, signature);
     }
 
     function test_aSignatureForAnotherTransferIsRefused() public {
-        bytes memory signature = sign(aliceKey, delivery.releaseDigest(keccak256("elsewhere"), B));
+        bytes memory signature = signFor(aliceKey, delivery.releaseDigest(keccak256("elsewhere"), B));
         vm.expectRevert(PineSignDelivery.NotReleaser.selector);
         delivery.releaseSigned(id, B, signature);
     }
@@ -888,7 +934,7 @@ contract PineSignDeliveryReleaseSignedTest is Test {
     }
 
     function test_releasingTwiceHasNowhereToLand() public {
-        bytes memory signature = sign(aliceKey, delivery.releaseDigest(id, B));
+        bytes memory signature = signFor(aliceKey, delivery.releaseDigest(id, B));
         delivery.releaseSigned(id, B, signature);
         vm.expectRevert(
             abi.encodeWithSelector(PineSignDelivery.WrongState.selector, PineSignDelivery.State.Released)
@@ -921,5 +967,131 @@ contract PineSignDeliveryReleaseSignedTest is Test {
         vm.prank(alice);
         delivery.release(id, B);
         assertEq(uint256(delivery.stateOf(id)), uint256(PineSignDelivery.State.Released));
+    }
+}
+
+/**
+ * A send is the sender's, not the relayer's.
+ *
+ * This is here because the end-to-end run caught it: `send` took the sender
+ * from `msg.sender`, so a relayed send recorded the gateway as the sender and
+ * derived a different id than the one the sender had salted their key half
+ * with. The file would never have opened, and nothing would have errored.
+ */
+contract PineSignDeliverySenderTest is DeliveryTest {
+    DeliveryHarness delivery;
+    uint256 aliceKey = 0xA11CE;
+    address alice = vm.addr(0xA11CE);
+    address relayer = address(0xDEAD);
+    bytes32 constant B = keccak256("the half the sender holds back");
+    bytes32 rpIdHash = sha256("id.example.com");
+    bytes32 constant ORIGIN_HASH = keccak256("https://v1.id.example.com");
+    PineSignDelivery.SendParams baseParams;
+
+    function setUp() public {
+        bytes32[] memory origins = new bytes32[](1);
+        origins[0] = ORIGIN_HASH;
+        delivery = new DeliveryHarness(rpIdHash, origins);
+        vm.warp(1_700_000_000);
+        baseParams = PineSignDelivery.SendParams({
+            sender: alice,
+            releaser: address(0), // defaults to the sender
+            passkeyX: bytes32(uint256(0x1111)),
+            passkeyY: bytes32(uint256(0x2222)),
+            pkBX: bytes32(uint256(0x3333)),
+            pkBOdd: false,
+            ephemeralX: bytes32(uint256(0x4444)),
+            ephemeralOdd: true,
+            swarmRef: keccak256("swarm"),
+            ciphertextHash: keccak256("C"),
+            plaintextCommitment: keccak256(abi.encode(keccak256("salt||F"))),
+            releaseCommitment: keccak256(abi.encode(B)),
+            descriptionHash: keccak256("an invoice"),
+            acceptBy: uint64(block.timestamp + 1 days),
+            releaseBy: uint64(block.timestamp + 2 days)
+        });
+    }
+
+    function test_aRelayedSendRecordsTheSenderNotTheRelayer() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
+
+        vm.prank(relayer); // the gateway pays, as it always does
+        bytes32 id = delivery.send(p, authorised);
+
+        assertEq(delivery.get(id).sender, alice, "the relayer was recorded as the sender");
+        assertEq(delivery.get(id).releaser, alice, "the releaser should default to the sender");
+    }
+
+    /// And the id does not depend on who carried it, which is the whole point:
+    /// the sender salted their key half with this value before relaying.
+    function test_theIdIsTheSameWhoeverRelaysIt() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        bytes32 expected = delivery.transferId(p);
+
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
+        vm.prank(relayer);
+        assertEq(delivery.send(p, authorised), expected);
+    }
+
+    function test_aRelayerCannotSendWithoutTheSendersSignature() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        bytes memory somebodyElses = sendSig(delivery, p, 0xB0B);
+        vm.prank(relayer);
+        vm.expectRevert(PineSignDelivery.NotSender.selector);
+        delivery.send(p, somebodyElses);
+    }
+
+    /// A relayer cannot alter what it carries: every field is either in the id
+    /// or in the digest the sender signed.
+    function test_aRelayerCannotChangeTheReleaser() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
+
+        p.releaser = relayer; // try to make themselves the one who releases
+        vm.prank(relayer);
+        vm.expectRevert(PineSignDelivery.NotSender.selector);
+        delivery.send(p, authorised);
+    }
+
+    function test_aRelayerCannotChangeTheCommittedHalf() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
+
+        p.releaseCommitment = keccak256(abi.encode(keccak256("a half they chose")));
+        vm.prank(relayer);
+        vm.expectRevert(PineSignDelivery.NotSender.selector);
+        delivery.send(p, authorised);
+    }
+
+    function test_aRelayerCannotChangeTheDescription() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
+
+        p.descriptionHash = keccak256("something else entirely");
+        vm.prank(relayer);
+        vm.expectRevert(PineSignDelivery.NotSender.selector);
+        delivery.send(p, authorised);
+    }
+
+    /// The swarm reference is the one field a relayer does fill in, because it
+    /// only exists once the ciphertext is stored. The recipient signs over it
+    /// when they accept, which is where it is pinned.
+    function test_theRelayerMayFillInTheSwarmReference() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
+
+        p.swarmRef = keccak256("wherever it actually landed");
+        vm.prank(relayer);
+        bytes32 id = delivery.send(p, authorised);
+        assertEq(delivery.get(id).swarmRef, keccak256("wherever it actually landed"));
+    }
+
+    function test_aSenderOfZeroIsRefused() public {
+        PineSignDelivery.SendParams memory p = baseParams;
+        p.sender = address(0);
+        bytes memory authorised = sendSig(delivery, p, aliceKey);
+        vm.expectRevert(PineSignDelivery.EmptyField.selector);
+        delivery.send(p, authorised);
     }
 }

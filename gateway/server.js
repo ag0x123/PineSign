@@ -578,9 +578,22 @@ app.post('/api/delivery', limitSend, requireSignature, async (req, res) => {
     const sender = await names.reverse(req.pubKey)
     if (!sender) return res.status(403).json({ error: 'claim a name before sending' })
 
-    const { transferId, params, ciphertext, description, keptHalf, filename, recipientEmail } = req.body
-    if (!transferId || !params || !ciphertext || !keptHalf) {
-      return res.status(400).json({ error: 'transferId, params, ciphertext and keptHalf required' })
+    // Called `authorisation` rather than `signature` on purpose: every signed
+    // route already carries a `signature` over the nonce, and a second field
+    // by that name silently overwrote it — the request then failed as "bad
+    // signature" with nothing pointing at the collision.
+    const {
+      transferId, params, authorisation, ciphertext, description, keptHalf, filename, recipientEmail,
+    } = req.body
+    if (!transferId || !params || !authorisation || !ciphertext || !keptHalf) {
+      return res.status(400).json({
+        error: 'transferId, params, authorisation, ciphertext and keptHalf required',
+      })
+    }
+    // The sender signs their own send, so this gateway is carrying something
+    // it cannot alter. It also cannot send as anyone else.
+    if (params.sender?.toLowerCase() !== addressFromPublicKey(req.pubKey).toLowerCase()) {
+      return res.status(403).json({ error: 'the delivery names a different sender than the one signing' })
     }
 
     // Stored first: a contract record pointing at a ciphertext that is not
@@ -597,7 +610,7 @@ app.post('/api/delivery', limitSend, requireSignature, async (req, res) => {
       throw new Error(`a swarm reference should be 32 hex bytes, got ${swarmRef.length} characters`)
     }
 
-    const sent = await delivery.sendDelivery({ ...params, swarmRef: `0x${swarmRef}` })
+    const sent = await delivery.sendDelivery({ ...params, swarmRef: `0x${swarmRef}` }, authorisation)
 
     const recipientName = req.body.recipientPubKey
       ? await names.reverse(req.body.recipientPubKey)
@@ -747,6 +760,31 @@ app.post('/api/delivery/:id/kept-half', requireHexParam('id', { length: 64 }), r
     return res.status(403).json({ error: 'only the sender holds this' })
   }
   res.json({ keptHalf: local.keptHalf, transferId: local.id })
+})
+
+/**
+ * The digest the sender signs to authorise their own send.
+ *
+ * Asked for before anything is stored, because the sender has to sign it and
+ * the swarm reference — the one field they do not sign over — does not exist
+ * until the ciphertext is uploaded.
+ */
+app.post('/api/delivery/send-digest', limitSend, requireSignature, async (req, res) => {
+  if (!delivery.configured) {
+    return res.status(503).json({ error: 'this gateway has no delivery contract configured' })
+  }
+  try {
+    const { params } = req.body ?? {}
+    if (!params) return res.status(400).json({ error: 'params required' })
+    const id = await delivery.transferId({ ...params, swarmRef: `0x${'00'.repeat(32)}` })
+    const releaser = params.releaser && !/^0x0+$/.test(params.releaser) ? params.releaser : params.sender
+    res.json({
+      transferId: id,
+      digest: await delivery.sendDigest(id, params.releaseCommitment, params.descriptionHash, releaser),
+    })
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
 })
 
 /** The digest the releaser signs, computed by the contract. */

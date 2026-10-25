@@ -100,6 +100,17 @@ contract PineSignDelivery {
     }
 
     struct SendParams {
+        /**
+         * Who is sending, which is not whoever paid the gas.
+         *
+         * A send is relayed like everything else here, so `msg.sender` is the
+         * relayer. Taking the sender from it would have recorded the gateway
+         * as the sender of every delivery it carried, and — because the id is
+         * derived from the sender — would have given a different id than the
+         * one the sender salted their key half with. The file would then
+         * simply never have opened.
+         */
+        address sender;
         address releaser;
         bytes32 passkeyX;
         bytes32 passkeyY;
@@ -196,6 +207,20 @@ contract PineSignDelivery {
      */
     bytes32 private constant RELEASE_TYPEHASH =
         keccak256("PineSignRelease(bytes32 transferId,bytes32 releasedKey)");
+
+    /**
+     * What the sender signs to authorise their own send.
+     *
+     * Not the whole parameter struct: `swarmRef` is filled in by whoever stores
+     * the ciphertext, which happens after the sender has signed, so it cannot
+     * be part of this. Nothing is lost by leaving it out — the content is
+     * pinned by `ciphertextHash`, and the recipient signs over `swarmRef`
+     * when they accept.
+     */
+    bytes32 private constant SEND_TYPEHASH =
+        keccak256(
+            "PineSignSend(bytes32 transferId,bytes32 releaseCommitment,bytes32 descriptionHash,address releaser)"
+        );
     bytes32 private constant NAME_HASH = keccak256("PineSign");
     bytes32 private constant VERSION_HASH = keccak256("1");
 
@@ -239,10 +264,10 @@ contract PineSignDelivery {
      * checks `B` against the commitment the record holds, and the acceptance
      * digest covers both fields — so the recipient still signs over them.
      */
-    function transferId(address sender, SendParams memory p) public pure returns (bytes32) {
+    function transferId(SendParams memory p) public pure returns (bytes32) {
         return keccak256(
             abi.encode(
-                sender,
+                p.sender,
                 p.passkeyX,
                 p.passkeyY,
                 p.pkBX,
@@ -291,7 +316,23 @@ contract PineSignDelivery {
 
     // ---- the transitions ----
 
-    function send(SendParams calldata p) external returns (bytes32 id) {
+    /// The digest a sender signs to authorise one send, relayed by anyone.
+    function sendDigest(bytes32 id, bytes32 releaseCommitment, bytes32 descriptionHash, address releaser)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                domainSeparator(),
+                keccak256(abi.encode(SEND_TYPEHASH, id, releaseCommitment, descriptionHash, releaser))
+            )
+        );
+    }
+
+    function send(SendParams calldata p, bytes calldata signature) external returns (bytes32 id) {
+        if (p.sender == address(0)) revert EmptyField();
         if (p.acceptBy <= block.timestamp) revert AcceptWindowClosed();
         if (p.releaseBy <= p.acceptBy) revert DeadlinesOutOfOrder();
         // A zero commitment would make `release` or the junk check vacuous.
@@ -301,14 +342,23 @@ contract PineSignDelivery {
         bytes32 ephemeral = keccak256(abi.encode(p.ephemeralX, p.ephemeralOdd));
         if (ephemeralUsed[ephemeral]) revert EphemeralReused();
 
-        id = transferId(msg.sender, p);
+        id = transferId(p);
         if (_deliveries[id].state != State.None) revert AlreadySent();
+
+        // The sender authorises their own send. A relayer can decline to carry
+        // it and can change nothing in it: every field is either in the id or
+        // in the digest, except the swarm reference, which the recipient signs
+        // over when they accept.
+        address releaser = p.releaser == address(0) ? p.sender : p.releaser;
+        if (_recover(sendDigest(id, p.releaseCommitment, p.descriptionHash, releaser), signature) != p.sender) {
+            revert NotSender();
+        }
 
         ephemeralUsed[ephemeral] = true;
 
         Delivery storage d = _deliveries[id];
-        d.sender = msg.sender;
-        d.releaser = p.releaser == address(0) ? msg.sender : p.releaser;
+        d.sender = p.sender;
+        d.releaser = releaser;
         d.passkeyX = p.passkeyX;
         d.passkeyY = p.passkeyY;
         d.pkBX = p.pkBX;
@@ -324,7 +374,7 @@ contract PineSignDelivery {
         d.releaseBy = p.releaseBy;
         d.state = State.Sent;
 
-        emit Sent(id, msg.sender, p.swarmRef, p.acceptBy);
+        emit Sent(id, p.sender, p.swarmRef, p.acceptBy);
     }
 
     /**
