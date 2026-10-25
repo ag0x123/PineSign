@@ -3,8 +3,16 @@
 Two suites run without a browser, a chain, or a Bee node:
 
 ```
-npm test              # gateway and sign-in flow, 70 checks
-npm run test:contracts # resolver and receipts, 14 checks
+npm test                # gateway, sign-in, key split, assertion parsing
+npm run test:contracts   # delivery, WebAuthn, resolver, receipts
+```
+
+Three more need a chain, and are worth running before a deployment is believed:
+
+```
+npm run check:p256      # is the P-256 precompile live on the target chain
+npm run check:accept    # deploy, and verify one passkey assertion on chain
+npm run e2e             # a whole delivery: send, inspect, accept, release, open
 ```
 
 `npm test` starts a throwaway gateway with its own storage directory and no
@@ -21,14 +29,20 @@ developer sees locally. Nothing is faked to obtain it.
 
 ## What the automated suite cannot reach
 
-Three things need a real browser and a real authenticator:
+`npm run e2e` proves the protocol against a real chain, but it stands in for the
+authenticator tap — a script cannot drive a security key or a password manager.
+Four things therefore need a real browser and real hands:
 
 1. **The PRF extension.** Whether a given passkey provider returns a PRF result
-   at all, and whether it returns the same one on another device.
-2. **The popup boundary.** That the app really cannot read the key, and that
+   at all, and whether it returns the **same** one on another device. If it does
+   not, files sent to the first device cannot be opened on the second, and no
+   amount of testing elsewhere would reveal it.
+2. **The popup boundary.** That the app really cannot read the key, and that the
    `postMessage` origin checks hold in both directions.
 3. **rpId scoping.** That a page on the parent domain cannot assert a credential
    scoped to the sign-in subdomain — the property the whole design rests on.
+4. **The confirmation summary.** That an acceptance cannot be obtained without
+   the user seeing, in the signing page, what they are agreeing to.
 
 The checklist below covers them. Run it against a deployment, not localhost:
 passkeys are origin-bound, and localhost does not have the subdomain structure
@@ -89,25 +103,56 @@ devices and files sent to the first address will not open on the second.
 - [ ] Back on the send page, look the address up again. It now resolves to a
       name and a key.
 
-## 5. Send and receive
+## 5. Send and receive, the whole way through
 
-- [ ] Pick a file and send it. The sign-in window is used to encrypt; watch the
-      status text say so.
-- [ ] The recipient gets an email with a claim link.
-- [ ] Open the link **signed out**. You are asked to sign in before anything
-      about the file's contents is reachable.
-- [ ] Sign in as someone else. You are told it is addressed to a different key,
-      and `/api/claim` refuses you.
-- [ ] Sign in as the recipient. Accept. The file downloads and decrypts.
-- [ ] The receipt shows both signatures.
-- [ ] The sender gets a **delivered** email.
-- [ ] Try to claim again. It is refused: the receipt is write-once.
+This is the sequence the automated end-to-end already proves against Sepolia. What
+it cannot prove is that a real authenticator does its part, so it is walked again
+by hand.
+
+- [ ] On the send page, pick a file, write a description, and send.
+- [ ] Watch the status text: the encryption and the key split happen in the
+      sign-in window, not in the app.
+- [ ] The recipient gets an email with a link.
+- [ ] Open the link **signed out**. Nothing about the file's contents is
+      reachable, and the description is not shown.
+- [ ] Sign in as **someone else**. You are told it is not addressed to you, and
+      accepting is not offered.
+- [ ] Sign in as the recipient. The description appears. The file does not.
+- [ ] Click accept. **The sign-in window shows a summary** — the description, the
+      size, the stored file's hash, the delivery id and the digest being signed —
+      and does nothing until you press the button. This is step 4 above.
+- [ ] Decline once, with "Not now". Nothing is signed and nothing reaches the chain.
+- [ ] Accept. Your authenticator prompts; the acceptance is relayed and the state
+      becomes `Accepted`.
+- [ ] **Try to open it now.** It must refuse: the sender has not released.
+      `releasedKey` on chain is still thirty-two zero bytes.
+- [ ] The sender gets an email saying they can release.
+- [ ] As the sender, release. Your authenticator is not needed — the release is
+      signed with the key already derived in the sign-in window.
+- [ ] As the recipient, open it. The file downloads and the receipt shows a hash
+      matching what the sender committed to before you accepted.
+- [ ] Read the state back from the contract directly, with `cast` — not from the
+      gateway. It should say `Released`.
+
+### And the things that must fail
+
+- [ ] Accept the same delivery twice. The second attempt is refused.
+- [ ] Release twice. Refused.
+- [ ] Let an `acceptBy` deadline pass without accepting, then call
+      `expire`. The state becomes `Expired` and `senderDefaulted` is false.
+- [ ] Accept, then let `releaseBy` pass without releasing, then `expire`.
+      `senderDefaulted` is **true** — the sender took an acceptance and gave
+      nothing, and that is on the record.
 
 ## 6. The boundary holds
 
 - [ ] With the sign-in window open, run in the app's console:
       `localStorage` and `indexedDB` hold no private key, and no 64-character
       hex string appears anywhere in them.
+- [ ] In the app's console, confirm there is no way to ask the sign-in window for
+      the key itself: the only methods it answers are `identity`, `signNonce`,
+      `inspect`, `signAccept`, `prepareSend`, `openKeptHalf`, `signRelease` and
+      `open`. Ask it for anything else and it replies "no such method".
 - [ ] In the app's console, `window.open('https://<signin domain>')` then try to
       read anything from the returned window. The browser refuses: different
       origin.
