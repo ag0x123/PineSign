@@ -661,3 +661,136 @@ contract PineSignDeliveryOriginTest is Test {
         assertEq(WebAuthn.originHashOf(a), bytes32(0));
     }
 }
+
+/**
+ * What the recipient's signature says, and that it cannot be made to say
+ * something else afterwards.
+ *
+ * The id does not cover `releaseCommitment`, so the digest has to — otherwise
+ * an acceptance would not name the key half it was given in exchange for.
+ */
+contract PineSignDeliveryDigestTest is Test {
+    DeliveryHarness delivery;
+    address alice = address(0xA11CE);
+    address releaser = address(0xBEEF);
+    bytes32 constant B = keccak256("the half the sender holds back");
+    bytes32 rpIdHash = sha256("id.example.com");
+    bytes32 constant ORIGIN_HASH = keccak256("https://v1.id.example.com");
+    PineSignDelivery.SendParams baseParams;
+
+    function setUp() public {
+        bytes32[] memory origins = new bytes32[](1);
+        origins[0] = ORIGIN_HASH;
+        delivery = new DeliveryHarness(rpIdHash, origins);
+        vm.warp(1_700_000_000);
+        baseParams = PineSignDelivery.SendParams({
+            releaser: releaser,
+            passkeyX: bytes32(uint256(0x1111)),
+            passkeyY: bytes32(uint256(0x2222)),
+            pkBX: bytes32(uint256(0x3333)),
+            pkBOdd: false,
+            ephemeralX: bytes32(uint256(0x4444)),
+            ephemeralOdd: true,
+            swarmRef: keccak256("swarm"),
+            ciphertextHash: keccak256("C"),
+            plaintextCommitment: keccak256(abi.encode(keccak256("salt||F"))),
+            releaseCommitment: keccak256(abi.encode(B)),
+            descriptionHash: keccak256("an invoice"),
+            acceptBy: uint64(block.timestamp + 1 days),
+            releaseBy: uint64(block.timestamp + 2 days)
+        });
+    }
+
+    function sendWith(PineSignDelivery.SendParams memory p) internal returns (bytes32) {
+        vm.prank(alice);
+        return delivery.send(p);
+    }
+
+    /**
+     * Two transfers identical but for the committed key half share an id —
+     * that is the consequence of taking releaseCommitment out of it — and must
+     * therefore produce different digests, or a signature for one would be a
+     * signature for the other.
+     */
+    function test_theDigestSeparatesTransfersTheIdCannot() public {
+        PineSignDelivery.SendParams memory first = baseParams;
+        bytes32 id1 = sendWith(first);
+        bytes32 digest1 = delivery.acceptDigest(id1);
+
+        PineSignDelivery.SendParams memory second = baseParams;
+        second.releaseCommitment = keccak256(abi.encode(keccak256("a different half")));
+        assertEq(delivery.transferId(alice, second), id1, "the id cannot tell these apart");
+
+        // The same id is already taken, so this is the proof that matters:
+        // the digest is a function of the committed half, not just the id.
+        DeliveryHarness other = new DeliveryHarness(rpIdHash, originList());
+        vm.prank(alice);
+        bytes32 id2 = other.send(second);
+        assertEq(id2, id1, "same id on a fresh deployment");
+        assertTrue(other.acceptDigest(id2) != digest1, "the digest must differ");
+    }
+
+    function originList() internal pure returns (bytes32[] memory origins) {
+        origins = new bytes32[](1);
+        origins[0] = ORIGIN_HASH;
+    }
+
+    function test_theDigestCoversTheSwarmReference() public {
+        bytes32 digest = delivery.acceptDigest(sendWith(baseParams));
+        PineSignDelivery.SendParams memory moved = baseParams;
+        moved.swarmRef = keccak256("somewhere else");
+        DeliveryHarness other = new DeliveryHarness(rpIdHash, originList());
+        vm.prank(alice);
+        assertTrue(other.acceptDigest(other.send(moved)) != digest);
+    }
+
+    function test_theDigestCoversTheReleaser() public {
+        bytes32 digest = delivery.acceptDigest(sendWith(baseParams));
+        PineSignDelivery.SendParams memory swapped = baseParams;
+        swapped.releaser = address(0xC0FFEE);
+        DeliveryHarness other = new DeliveryHarness(rpIdHash, originList());
+        vm.prank(alice);
+        assertTrue(other.acceptDigest(other.send(swapped)) != digest);
+    }
+
+    /**
+     * Nothing the recipient signed over can change afterwards.
+     *
+     * Read before, read again after an acceptance and after a release. The
+     * contract has no setter for any of these, and this is the test that would
+     * notice if one were ever added.
+     */
+    function test_nothingSignedOverCanChangeAfterSend() public {
+        bytes32 id = sendWith(baseParams);
+        bytes32 digest = delivery.acceptDigest(id);
+        PineSignDelivery.Delivery memory before = delivery.get(id);
+
+        delivery.markAccepted(id);
+        assertEq(delivery.acceptDigest(id), digest, "accepting changed the digest");
+
+        vm.prank(releaser);
+        delivery.release(id, B);
+        assertEq(delivery.acceptDigest(id), digest, "releasing changed the digest");
+
+        PineSignDelivery.Delivery memory now_ = delivery.get(id);
+        assertEq(now_.releaseCommitment, before.releaseCommitment);
+        assertEq(now_.ciphertextHash, before.ciphertextHash);
+        assertEq(now_.plaintextCommitment, before.plaintextCommitment);
+        assertEq(now_.descriptionHash, before.descriptionHash);
+        assertEq(now_.swarmRef, before.swarmRef);
+        assertEq(now_.releaser, before.releaser);
+        assertEq(now_.acceptBy, before.acceptBy);
+        assertEq(now_.passkeyX, before.passkeyX);
+        assertEq(now_.passkeyY, before.passkeyY);
+    }
+
+    /// And the released half is the one that was committed to, not another.
+    function test_theReleasedHalfIsTheCommittedOne() public {
+        bytes32 id = sendWith(baseParams);
+        delivery.markAccepted(id);
+        vm.prank(releaser);
+        delivery.release(id, B);
+        PineSignDelivery.Delivery memory d = delivery.get(id);
+        assertEq(keccak256(abi.encode(d.releasedKey)), d.releaseCommitment);
+    }
+}

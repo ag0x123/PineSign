@@ -159,9 +159,30 @@ contract PineSignDelivery {
     // here cannot be replayed into some other contract's `Accept`.
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    /**
+     * Everything the recipient is agreeing to, named in the signature itself.
+     *
+     * `transferId` already binds the sender, both keys, the ciphertext hash,
+     * the plaintext commitment, the description hash and both deadlines — it is
+     * a hash of them. The three that follow it are the fields the id does
+     * *not* cover, and each is here for a reason:
+     *
+     *   releaseCommitment  which key half the sender has committed to. The
+     *                      contract makes it immutable after `send`, but a
+     *                      signature that did not name it would not say so —
+     *                      anyone checking Bob's acceptance later would have
+     *                      to take a chain lookup's word for which `B` was
+     *                      promised rather than read it off what he signed.
+     *   swarmRef           where the ciphertext is to be fetched from.
+     *   releaser           who is permitted to post `B`. A recipient may well
+     *                      care that it is the sender and not a third party.
+     *
+     * So the digest describes the whole transfer on its own, and a verifier
+     * needs nothing but the signature and the record to see they agree.
+     */
     bytes32 private constant ACCEPT_TYPEHASH =
         keccak256(
-            "PineSignAccept(bytes32 transferId,bytes32 ciphertextHash,bytes32 plaintextCommitment,bytes32 descriptionHash,uint64 acceptBy)"
+            "PineSignAccept(bytes32 transferId,bytes32 ciphertextHash,bytes32 plaintextCommitment,bytes32 descriptionHash,bytes32 releaseCommitment,bytes32 swarmRef,address releaser,uint64 acceptBy)"
         );
     bytes32 private constant NAME_HASH = keccak256("PineSign");
     bytes32 private constant VERSION_HASH = keccak256("1");
@@ -230,7 +251,15 @@ contract PineSignDelivery {
         if (d.state == State.None) revert UnknownTransfer();
         bytes32 structHash = keccak256(
             abi.encode(
-                ACCEPT_TYPEHASH, id, d.ciphertextHash, d.plaintextCommitment, d.descriptionHash, d.acceptBy
+                ACCEPT_TYPEHASH,
+                id,
+                d.ciphertextHash,
+                d.plaintextCommitment,
+                d.descriptionHash,
+                d.releaseCommitment,
+                d.swarmRef,
+                d.releaser,
+                d.acceptBy
             )
         );
         return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
