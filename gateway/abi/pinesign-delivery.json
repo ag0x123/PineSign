@@ -1,0 +1,815 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "rpIdHash_",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "originHashes",
+          "type": "bytes32[]",
+          "internalType": "bytes32[]"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "abortSend",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "accept",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "assertion",
+          "type": "tuple",
+          "internalType": "struct WebAuthn.Assertion",
+          "components": [
+            {
+              "name": "authenticatorData",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "clientDataJSON",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "typeIndex",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "challengeIndex",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "originIndex",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "r",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "s",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "acceptDigest",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "allowedOrigin",
+      "inputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "domainSeparator",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ephemeralUsed",
+      "inputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "expire",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "get",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct PineSignDelivery.Delivery",
+          "components": [
+            {
+              "name": "sender",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "pkBOdd",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "ephemeralOdd",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "state",
+              "type": "uint8",
+              "internalType": "enum PineSignDelivery.State"
+            },
+            {
+              "name": "releaser",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "acceptBy",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "releaseBy",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "acceptedAt",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "releasedAt",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "passkeyX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "passkeyY",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "pkBX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ephemeralX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "swarmRef",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ciphertextHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "plaintextCommitment",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "releaseCommitment",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "descriptionHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "releasedKey",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isReleased",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "release",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "b",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "releaseDigest",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "b",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "releaseSigned",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "b",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "signature",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "rpIdHash",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "send",
+      "inputs": [
+        {
+          "name": "p",
+          "type": "tuple",
+          "internalType": "struct PineSignDelivery.SendParams",
+          "components": [
+            {
+              "name": "releaser",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "passkeyX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "passkeyY",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "pkBX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "pkBOdd",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "ephemeralX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ephemeralOdd",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "swarmRef",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ciphertextHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "plaintextCommitment",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "releaseCommitment",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "descriptionHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "acceptBy",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "releaseBy",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "senderDefaulted",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "stateOf",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "enum PineSignDelivery.State"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "transferId",
+      "inputs": [
+        {
+          "name": "sender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "p",
+          "type": "tuple",
+          "internalType": "struct PineSignDelivery.SendParams",
+          "components": [
+            {
+              "name": "releaser",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "passkeyX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "passkeyY",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "pkBX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "pkBOdd",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "ephemeralX",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ephemeralOdd",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "swarmRef",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "ciphertextHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "plaintextCommitment",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "releaseCommitment",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "descriptionHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "acceptBy",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "releaseBy",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "event",
+      "name": "Aborted",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "at",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Accepted",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "passkeyX",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "at",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Lapsed",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "from",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "enum PineSignDelivery.State"
+        },
+        {
+          "name": "at",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Released",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "releasedKey",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "at",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Sent",
+      "inputs": [
+        {
+          "name": "id",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "sender",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "swarmRef",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "acceptBy",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "AcceptWindowClosed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "AlreadySent",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "BadAssertion",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "BadReleaseKey",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "BadSignature",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "DeadlinesOutOfOrder",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "EmptyField",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "EphemeralReused",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotReleaser",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotSender",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "OriginNotAllowed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ReleaseWindowClosed",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "StillInTime",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "UnknownTransfer",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "WrongState",
+      "inputs": [
+        {
+          "name": "actual",
+          "type": "uint8",
+          "internalType": "enum PineSignDelivery.State"
+        }
+      ]
+    }
+  ]
+}

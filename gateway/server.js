@@ -26,6 +26,8 @@ import * as users from './users.js'
 import { emailHash, normaliseEmail } from './secrets.js'
 import * as pages from './pages.js'
 import { BEE_URL } from './bee.js'
+import * as delivery from './delivery.js'
+import * as deliveries from './deliveries.js'
 import { keccak256, toHex as viemHex } from 'viem'
 import { issueNonce, requireSignature } from './auth.js'
 import { transferDigest, verify, fromHex, toHex, addressFromPublicKey } from '../shared/crypto.js'
@@ -632,6 +634,262 @@ app.post('/api/send', limitSend, requireSignature, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
+})
+
+// ---- deliveries: the gateway carries, the contract decides ----
+
+/**
+ * Record a delivery the sender has already built.
+ *
+ * The ciphertext and the encrypted description go to Swarm, the parameters go
+ * to the contract, and the sender's sealed key half is kept here unopened. The
+ * gateway cannot read that half, so it cannot release — which is the only
+ * reason it is allowed to hold it.
+ */
+app.post('/api/delivery', limitSend, requireSignature, async (req, res) => {
+  if (!delivery.configured) {
+    return res.status(503).json({ error: 'this gateway has no delivery contract configured' })
+  }
+  try {
+    const sender = await names.reverse(req.pubKey)
+    if (!sender) return res.status(403).json({ error: 'claim a name before sending' })
+
+    const { transferId, params, ciphertext, description, keptHalf, filename, recipientEmail } = req.body
+    if (!transferId || !params || !ciphertext || !keptHalf) {
+      return res.status(400).json({ error: 'transferId, params, ciphertext and keptHalf required' })
+    }
+
+    // Stored first: a contract record pointing at a ciphertext that is not
+    // there yet would be a delivery nobody can inspect.
+    const swarmRef = await swarm.upload(new Uint8Array(Buffer.from(ciphertext, 'base64')))
+    const descriptionRef = description
+      ? await swarm.upload(new Uint8Array(Buffer.from(description, 'base64')))
+      : null
+
+    // A Swarm reference is 32 bytes in both modes — a real one, and the
+    // content hash the local fallback addresses blobs by — so it goes on chain
+    // as-is rather than being squeezed into shape.
+    if (!isHex(swarmRef, 64)) {
+      throw new Error(`a swarm reference should be 32 hex bytes, got ${swarmRef.length} characters`)
+    }
+
+    const sent = await delivery.sendDelivery({ ...params, swarmRef: `0x${swarmRef}` })
+
+    const recipientName = req.body.recipientPubKey
+      ? await names.reverse(req.body.recipientPubKey)
+      : null
+    const record = await deliveries.create({
+      id: transferId,
+      senderPubKey: req.pubKey,
+      senderName: sender.name,
+      recipientPubKey: req.body.recipientPubKey ?? null,
+      recipientName: recipientName?.name ?? null,
+      recipientEmail,
+      filename: filename ?? 'file',
+      size: Buffer.from(ciphertext, 'base64').length,
+      swarmRef,
+      descriptionRef,
+      keptHalf,
+      sentTx: sent.tx,
+    })
+
+    if (recipientEmail) {
+      mail.fileReady({
+        to: recipientEmail,
+        fromName: sender.name,
+        filename: record.filename,
+        link: `${publicOrigin(req)}/claim.html?id=${transferId}`,
+        expires: new Date(Number(params.acceptBy) * 1000).toUTCString(),
+      }).catch((err) => console.log(`  mail failed: ${err.message}`))
+    }
+
+    res.json({ id: transferId, tx: sent.tx, gasUsed: sent.gasUsed, swarmRef })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+/**
+ * Everything needed to inspect a delivery, from the chain and from Swarm.
+ *
+ * The state here is read from the contract, not from this gateway's own
+ * records — so a gateway that wanted to lie about whether something was
+ * accepted would be contradicted by anyone who looked.
+ */
+app.get('/api/delivery/:id', requireHexParam('id', { length: 64 }), async (req, res) => {
+  if (!delivery.configured) {
+    return res.status(503).json({ error: 'this gateway has no delivery contract configured' })
+  }
+  try {
+    const id = `0x${req.params.id}`
+    const onChain = await delivery.get(id)
+    if (onChain.state === 'None') return res.status(404).json({ error: 'no such delivery' })
+
+    const local = await deliveries.get(id)
+    const description = local?.descriptionRef
+      ? Buffer.from(await swarm.download(local.descriptionRef)).toString('base64')
+      : null
+
+    res.json({
+      id,
+      contract: delivery.ADDRESS,
+      state: onChain.state,
+      // The fields a recipient needs to derive their half and check the file.
+      ephemeralX: onChain.ephemeralX,
+      ephemeralOdd: onChain.ephemeralOdd,
+      ciphertextHash: onChain.ciphertextHash,
+      plaintextCommitment: onChain.plaintextCommitment,
+      releaseCommitment: onChain.releaseCommitment,
+      descriptionHash: onChain.descriptionHash,
+      passkeyX: onChain.passkeyX,
+      passkeyY: onChain.passkeyY,
+      releaser: onChain.releaser,
+      acceptBy: onChain.acceptBy.toString(),
+      releaseBy: onChain.releaseBy.toString(),
+      acceptedAt: onChain.acceptedAt.toString(),
+      releasedAt: onChain.releasedAt.toString(),
+      // Zero until the acceptance is recorded. This is the whole mechanism.
+      releasedKey: onChain.releasedKey,
+      senderName: local?.senderName ?? null,
+      filename: local?.filename ?? null,
+      size: local?.size ?? null,
+      swarmRef: local?.swarmRef ?? null,
+      description,
+      acceptDigest: onChain.state === 'Sent' ? await delivery.acceptDigest(id) : null,
+    })
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
+})
+
+/** The ciphertext. Useless without both halves of the key. */
+app.get('/api/delivery/:id/blob', requireHexParam('id', { length: 64 }), async (req, res) => {
+  const local = await deliveries.get(`0x${req.params.id}`)
+  if (!local) return res.status(404).json({ error: 'no such delivery' })
+  try {
+    const bytes = await swarm.download(local.swarmRef)
+    res.set('Content-Type', 'application/octet-stream').send(Buffer.from(bytes))
+  } catch (err) {
+    res.status(502).json({ error: `swarm fetch failed: ${err.message}` })
+  }
+})
+
+/**
+ * Carry an acceptance to the contract.
+ *
+ * Unauthenticated on purpose: the assertion is the authentication, and it is
+ * the contract that checks it. Requiring a signed-in caller as well would mean
+ * a recipient who cannot reach this gateway cannot accept, when in fact anyone
+ * could carry the same assertion.
+ */
+app.post('/api/delivery/:id/accept', limitSend, requireHexParam('id', { length: 64 }), async (req, res) => {
+  if (!delivery.configured) {
+    return res.status(503).json({ error: 'this gateway has no delivery contract configured' })
+  }
+  try {
+    const id = `0x${req.params.id}`
+    const { assertion } = req.body ?? {}
+    if (!assertion) return res.status(400).json({ error: 'assertion required' })
+
+    const relayed = await delivery.relayAccept(id, assertion)
+
+    const local = await deliveries.get(id)
+    if (local?.senderPubKey) {
+      const senderEmail = await invites.senderEmailFor(local.senderPubKey)
+      if (senderEmail) {
+        mail.accepted({
+          to: senderEmail,
+          recipientName: local.recipientName ?? 'the recipient',
+          link: `${publicOrigin(req)}/send.html?release=${id}`,
+        }).catch((err) => console.log(`  mail failed: ${err.message}`))
+      }
+    }
+
+    res.json({ ok: true, ...relayed, state: await delivery.stateOf(id) })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+/** The sealed half back to the sender, who is the only one who can open it. */
+app.post('/api/delivery/:id/kept-half', requireHexParam('id', { length: 64 }), requireSignature, async (req, res) => {
+  const local = await deliveries.get(`0x${req.params.id}`)
+  if (!local) return res.status(404).json({ error: 'no such delivery' })
+  if (local.senderPubKey !== req.pubKey) {
+    return res.status(403).json({ error: 'only the sender holds this' })
+  }
+  res.json({ keptHalf: local.keptHalf, transferId: local.id })
+})
+
+/** The digest the releaser signs, computed by the contract. */
+app.get('/api/delivery/:id/release-digest/:key', requireHexParam('id', { length: 64 }), async (req, res) => {
+  if (!isHex(req.params.key, 64)) return res.status(400).json({ error: 'key must be 32 hex bytes' })
+  try {
+    res.json({ digest: await delivery.releaseDigest(`0x${req.params.id}`, `0x${req.params.key}`) })
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
+})
+
+/** Carry a release. The signature is the releaser's; we hold no half. */
+app.post('/api/delivery/:id/release', limitSend, requireHexParam('id', { length: 64 }), async (req, res) => {
+  if (!delivery.configured) {
+    return res.status(503).json({ error: 'this gateway has no delivery contract configured' })
+  }
+  try {
+    const id = `0x${req.params.id}`
+    const { releasedKey, signature } = req.body ?? {}
+    if (!isHex(releasedKey?.replace(/^0x/, ''), 64)) {
+      return res.status(400).json({ error: 'releasedKey must be 32 hex bytes' })
+    }
+    if (!signature) return res.status(400).json({ error: 'signature required' })
+
+    const relayed = await delivery.relayRelease(id, releasedKey, signature)
+
+    const local = await deliveries.get(id)
+    if (local?.recipientEmail) {
+      mail.fileReady({
+        to: local.recipientEmail,
+        fromName: local.senderName ?? 'the sender',
+        filename: local.filename ?? 'a file',
+        link: `${publicOrigin(req)}/claim.html?id=${id}`,
+        expires: 'once released, it stays released',
+      }).catch((err) => console.log(`  mail failed: ${err.message}`))
+    }
+
+    res.json({ ok: true, ...relayed, state: await delivery.stateOf(id) })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+/** Put a lapse on the record, from either side. */
+app.post('/api/delivery/:id/expire', limitSend, requireHexParam('id', { length: 64 }), async (req, res) => {
+  try {
+    const id = `0x${req.params.id}`
+    const relayed = await delivery.relayExpire(id)
+    res.json({ ok: true, ...relayed, state: await delivery.stateOf(id) })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+/** A sender's deliveries, so they can see what is waiting to be released. */
+app.post('/api/deliveries', requireSignature, async (req, res) => {
+  const mine = await deliveries.bySender(req.pubKey)
+  if (!delivery.configured) return res.json(mine.map((d) => ({ ...d, keptHalf: undefined })))
+  res.json(
+    await Promise.all(
+      mine.map(async (d) => ({
+        id: d.id,
+        filename: d.filename,
+        recipientName: d.recipientName,
+        createdAt: d.createdAt,
+        // From the contract, so this list cannot say "accepted" on its own.
+        state: await delivery.stateOf(d.id).catch(() => 'unknown'),
+      })),
+    ),
+  )
 })
 
 /** Public record. Enough to verify the transfer; not enough to read the file. */

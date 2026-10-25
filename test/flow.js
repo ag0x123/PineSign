@@ -428,5 +428,38 @@ check('a claim is write-once', again.status === 400 && /already claimed/.test(ag
 const final = await (await fetch(`${BASE}/api/transfer/${id}`)).json()
 check('receipt is on the record', Boolean(final.claim?.recipientSignature))
 
+console.log('\ndeliveries, unconfigured')
+// With no DELIVERY_ADDRESS the gateway must say so rather than half-work.
+// This is the state a fresh deployment is in, and it is worth knowing that
+// every delivery route refuses cleanly in it.
+const noContract = await post('/api/delivery', {
+  ...(await auth(alicePriv, alicePub)),
+  transferId: '0x' + '11'.repeat(32),
+  params: {},
+  ciphertext: 'AAAA',
+  keptHalf: [1, 2, 3],
+})
+check('sending a delivery is refused without a contract', noContract.status === 503)
+
+const noRead = await (await fetch(`${BASE}/api/delivery/${'11'.repeat(32)}`)).json()
+check('and reading one says the same', /no delivery contract/.test(noRead.error ?? ''))
+
+const noAccept = await post(`/api/delivery/${'11'.repeat(32)}/accept`, { assertion: {} })
+check('and so does relaying an acceptance', noAccept.status === 503)
+
+const noRelease = await post(`/api/delivery/${'11'.repeat(32)}/release`, {
+  releasedKey: '0x' + 'ab'.repeat(32),
+  signature: '0x' + '00'.repeat(65),
+})
+check('and relaying a release', noRelease.status === 503)
+
+// The id is a 32-byte hash, and anything else must not reach a lookup.
+const badId = await (await fetch(`${BASE}/api/delivery/nothex`)).json()
+check('a malformed id is refused', /hex string/.test(badId.error ?? ''))
+
+// The sealed half is the sender's alone, and the route is signature-gated.
+const notMine = await post(`/api/delivery/${'11'.repeat(32)}/kept-half`, await auth(evePriv, evePub))
+check('the kept half is not handed to a stranger', notMine.status === 404 || notMine.status === 403)
+
 console.log(`\n${pass} passed, ${fail} failed\n`)
 process.exit(fail === 0 ? 0 : 1)
