@@ -1,0 +1,38 @@
+{
+  "spike": "7-ensv2",
+  "PASS": true,
+  "readOnly": true,
+  "ensv2LiveOnMainnet": true,
+  "mainnet": {
+    "v1Registry": "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e",
+    "v1ControllerLatest": "0x59E16fcCd424Cc24e280Be16E11Bcd56fb0CE547",
+    "upgradableUniversalResolverProxy": "0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe",
+    "universalResolverV2": "0x06fdd07f007adac667177b46ab2eb9a75132cfd5",
+    "ethRegistry": "0xf60aba43e1f7f3dab1186ff03b561401c9df85e2",
+    "ethRegistrar": "0xd6d8369e55c94ae8afa714e6cf7ab5be54d5cc81",
+    "rootRegistry": "0x2553c09be6447beffdb86fa622ad41fb8f77a91e",
+    "allHaveCode": true
+  },
+  "sepolia": {
+    "universalResolverV2": "0x24e1d8e068620b647ca097f961a61055f4f42d72",
+    "ethRegistry": "0xd4ebcbbdf463c9c45784603db0ddd499bc44a8b4",
+    "ethRegistrar": "0xf633e7fc17e2bbe0d0965d18ec1821dcb754a3d3",
+    "rootRegistry": "0xb458d6a3a77919449d03e7a6903c26827c1ec43f",
+    "allHaveCode": true,
+    "note": "Sepolia ENSv1 is marked no longer in use; the ENSv2 deployment is what Sepolia apps resolve through."
+  },
+  "pinesignEth": {
+    "available": true,
+    "oneYearEth": "0.002252110879945551",
+    "fiveYearsEth": "0.011260554399727758",
+    "pricedVia": "the ENSv1 ETHRegistrarController at 0x59E1…E547, which is still the registration path",
+    "note": "The ENSv2 ETHRegistrar at 0xd6d8…cc81 reverts on available(string) and rentPrice(string,uint256): it has a different ABI, so do not assume the v1 controller's interface when scripting a real registration."
+  },
+  "resolution": {
+    "onchain": { "name": "nick.eth", "resolved": true, "ms": 845 },
+    "offchainCcipRead": { "name": "1.offchainexample.eth", "resolved": true, "ms": 2513 },
+    "wildcardSubname": { "name": "anything-random-12345.offchainexample.eth", "resolved": true, "ms": 1507, "meaning": "An unregistered label under a gateway-backed parent resolves, so ENSIP-10 wildcard plus EIP-3668 CCIP-Read is working through the proxy." },
+    "l2Subname": { "name": "jesse.base.eth", "resolved": true, "ms": 1128 }
+  },
+  "forTheDesign": "Resolve through the UpgradableUniversalResolverProxy at 0xeEeE…EeEe on both networks: it is the same address on mainnet and Sepolia and it follows offchain lookups, so one code path covers wildcard subnames without registering anything per user."
+}
