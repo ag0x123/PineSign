@@ -1,0 +1,17 @@
+{
+  "spike": "5a-frame-tx-sample",
+  "PASS": true,
+  "chainId": 1337,
+  "client": "ethrex/v23.0.0-eip8141-tracer-9aa3645d",
+  "gateway": "https://altmempoolgateway.forshtat.com/rpc",
+  "sender": "0xC8e1b198269DDf3d6725d0fC66fec26949A99d6a",
+  "txHash": "0x3c52b213159d8c46829cb199bdd6fc42a52ba852427df34b41b40e337e45a756",
+  "block": 5029,
+  "txType": "0x6",
+  "frames": 2,
+  "framesAllSucceeded": true,
+  "gasUsed": 26102,
+  "path": "canonical (eth_sendRawTransaction)",
+  "BLOCKER": "The standard alt-mempool accepts frame txs via eth_sendFrameTransaction and then drops them: the sidecar answers OK, re-submission says 'Frame transaction already known', debug_bundler_dumpMempool goes empty, and the tx is never built. Reproduced with two independent freshly-funded keys, 120s each. Meanwhile 35 type-0x6 txs from other senders landed in a 60-block window, baseFee was 7 wei, and the identical signed tx mined in seconds through eth_sendRawTransaction. So frame execution works; the sidecar -> block builder handoff does not.",
+  "impact": "Test 5d needs 'canonical rejects, alt admits'. Admission can still be shown, but inclusion via the alt-mempool cannot."
+}
