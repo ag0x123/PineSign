@@ -1,0 +1,30 @@
+{
+  "spike": "5b-p256-account + 5e-execute-frame-store",
+  "PASS": true,
+  "network": "altmempool devnet, chain 1337",
+  "wallet": "0x78095095c4c46cc473248f3fd4206291bbf8a80c",
+  "store": "0x21dfed560b05c864ba1f376b23283b166ae393c1",
+  "txHash": "0xd4c9f09bc1c150ee6d32259f3216e0b0eb7844dc95244be5a8a0e5c0bfaccce0",
+  "block": 5120,
+  "frames": 2,
+  "framesAllSucceeded": true,
+  "gasTotal": 487285,
+  "gasVerifyFrame": 23634,
+  "gasSenderFrame": 56173,
+  "readBackMatches": true,
+  "negativeTest": {
+    "what": "same wallet, one bit flipped in s",
+    "result": "rejected at submission",
+    "message": "Frame transaction validation-prefix simulation failed: validation prefix frame reverted"
+  },
+  "design": [
+    "The devnet profile declares a native P256 = 0x2 signature scheme, but the support library has no code path for it, so this does not depend on the protocol verifying P-256.",
+    "The signature rides in an ARBITRARY (0x0) signature entry. sigHash elides the signature bytes of any entry whose msg is empty, so signing does not change the hash: verified by sigHashUnchangedAfterSigning = true. Putting r||s in frame data would be circular, because frame data is covered by the hash.",
+    "The wallet reads r||s with SIGDATACOPY, reads the digest with TXPARAM(SIG_HASH), and calls the EIP-7951 precompile at 0x100 itself.",
+    "The message here is the raw tx signature hash. A real passkey signs sha256(authenticatorData || sha256(clientDataJSON)) with the tx hash as the challenge; that wrapping is PineSign's WebAuthn.sol and layers on top unchanged."
+  ],
+  "gotchas": [
+    "MAX_VERIFY_GAS is 100,000 for the whole validation prefix (all VERIFY frames plus signature cost). The first attempt asked 400k execution + 200k state and was refused with 'prefix gas budget (frames + sig cost) exceeds MAX_VERIFY_GAS'. 80k execution + 0 state fits, and the frame actually used 23,634.",
+    "The workshop's deployGasLimit of 6,000,000 is not enough for a contract of this size: HegotaSupport deploys its Yul opcode helpers in the constructor, and the deploy consumed exactly the limit and reverted. Raised to 15,000,000."
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "spike": "5b-p256-precompile",
+  "PASS": true,
+  "network": "altmempool devnet, chain 1337, ethrex v23.0.0-eip8141-tracer",
+  "EIP-7951 at 0x100": "LIVE",
+  "RIP-7212 at 0x0b": "absent",
+  "inputBytes": 160,
+  "validSignature": "0x…01",
+  "bitFlippedSignature": "0x (empty, rejected)",
+  "gasPerVerify": 6900,
+  "note": "No Solidity P-256 verifier needed. Matches Sepolia, mainnet, arbitrum/optimism/base-sepolia, all of which PineSign already probed."
+}
