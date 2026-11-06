@@ -1,0 +1,27 @@
+{
+  "spike": "1-arkiv",
+  "PASS": true,
+  "sdk": "@arkiv-network/sdk 1.0.1",
+  "chain": "rabdi testnet, chainId 7794095",
+  "rpc": "https://rpc.rabdi.db-chain.testnet.arkiv.network (via rabdi({ accessKey }), which puts the key in the URL; http() takes no URL)",
+  "owner": "0xab1A75cd8fd8aAeD39ac39f44Eb47A688078c810",
+  "schema": "pinesign.invite { fingerprint: str().indexed(), emailHash: str().indexed(), payload: bytes() }",
+  "create": { "ms": 7249, "gasUsed": 124876, "expiration": "ExpirationTime.fromDays(1)" },
+  "queryByIndexedFieldAndOwner": { "ms": 376, "foundOurs": true },
+  "patch": { "ms": 2655, "gasUsed": 49050, "valueChanged": true },
+  "extend": { "ms": 2863, "gasUsed": 50732, "expiresAtBefore": 339406, "expiresAtAfter": 598611, "grewByBlocks": 259205 },
+  "payloadRoundTrip": {
+    "bytes": 129,
+    "contents": "uncompressed P-256 public key (65) + compact signature (64)",
+    "byteIdentical": true,
+    "p256SignatureStillVerifies": true
+  },
+  "latencyNote": "Writes are one block, roughly 2.6 to 8.4 seconds across runs. Reads are about 350 ms.",
+  "gotchas": [
+    "Query results wrap every value as { type, value } rather than returning it raw. Reading row.payload directly gives an object, and new Uint8Array(object) is a silently EMPTY array, not an error: the first run reported payloadIdentical false with no clue why. Always unwrap .value.",
+    "walletClient.patchEntity is positional: (schema, entityKey, changes). The PatchEntityParameters type in the docs is the shape executeBatch takes, and passing it to patchEntity fails with 'Invalid schema: expected a schema built with defineSchema'.",
+    "extendEntity's return value does not carry the new expiry under the name its type suggests (expiresAtBlock read as 0). Read $expiresAt from the entity on both sides to prove the extension.",
+    "The docs page /entities/change-and-delete/ is a 404; the SDK's own .d.ts files are the reliable reference.",
+    "@noble/curves 2.4.0 only exports './nist.js', not './nist', and p256.sign returns the 64-byte compact form directly rather than an object with r and s. The workshop's copy is 1.x and does the opposite, so code is not portable between the two spikes."
+  ]
+}

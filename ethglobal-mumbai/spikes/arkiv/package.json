@@ -1,0 +1,1 @@
+{"name":"spike-arkiv","private":true,"type":"module","dependencies":{"@arkiv-network/sdk":"latest","@noble/curves":"^2.4.0","@noble/hashes":"^2.4.0","viem":"^2.21.0"}}
