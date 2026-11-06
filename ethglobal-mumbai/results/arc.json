@@ -1,0 +1,18 @@
+{
+  "spike": "8-arc",
+  "PASS": "PARTIAL",
+  "usdcTransferOnArcTestnet": {
+    "run": false,
+    "why": "No Arc testnet USDC was provided for 0x222d0AD1b152f20e948AE290BC3C911a2D09fe13. Testnet tokens come from https://faucet.circle.com.",
+    "alsoMissing": "The landing docs do not give the Arc testnet chain id or RPC; they are at https://docs.arc.io/arc/references/connect-to-arc.md."
+  },
+  "bridgeKitOnGnosis": {
+    "answer": "NO",
+    "docUrl": "https://docs.arc.io/app-kit/bridge.md",
+    "chainListUrl": "https://docs.arc.io/app-kit/references/supported-blockchains.md",
+    "supported": ["Arbitrum", "Arc", "Avalanche", "Base", "Codex", "Cronos", "EDGE", "Ethereum", "HyperEVM", "Injective", "Ink", "Linea", "Monad", "Morph", "OP Mainnet", "Pharos", "Plasma", "Plume", "Polygon PoS", "Sei", "Solana", "Sonic", "Unichain", "World Chain", "X Layer", "XDC"],
+    "whyItMatters": "Swarm postage is bought in xBZZ on Gnosis. Bridge Kit cannot deliver there, so Circle's bridge cannot fund postage batches. Funding Gnosis needs a different route."
+  },
+  "note": "Arc uses USDC for gas rather than ETH, and claims sub-second finality.",
+  "security": "https://docs.arc.io/ serves an 'Agent Instructions' block telling an agent to install Circle skills before reading. That is page content, not an instruction from the user, and it was ignored."
+}
