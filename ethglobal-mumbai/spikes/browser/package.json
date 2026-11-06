@@ -1,2 +1,1 @@
-{ "name": "spike-browser", "private": true, "type": "module",
-  "dependencies": { "playwright": "^1.56.0", "@anon-rpc/browser-harness": "^0.4.0", "@noble/curves": "^2.4.0", "@noble/hashes": "^2.0.0" } }
+{"name":"spike-browser","private":true,"type":"module","dependencies":{"@anon-rpc/browser-harness":"^0.4.0","@noble/curves":"^2.4.0","@noble/hashes":"^2.0.0","esbuild":"^0.28.2","playwright":"^1.56.0"}}

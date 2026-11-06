@@ -1,0 +1,31 @@
+{
+  "spike": "6-anon-rpc",
+  "PASS": true,
+  "package": "@anon-rpc/browser-harness 0.4.0",
+  "how": "browser only, so bundled with esbuild and run in the installed Chrome 150 under Playwright",
+  "specifiers": {
+    "passthrough": {
+      "address": "0x4fd77be300f31c5fe6ab266d35d27750a3478d27",
+      "network": "mainnet",
+      "readyMs": 1266,
+      "arkivRead": { "ok": true, "ms": 609, "result": "0x76edaf (7794095, Rabdi)" },
+      "devnetRead": { "ok": true, "ms": 1983, "result": "0x539 (1337, altmempool devnet)" },
+      "caveat": "Passthrough is the non-anonymizing reference network: it fulfils calls with an ordinary fetch. It proves the harness, the specifier read and the routing API, NOT anonymity."
+    },
+    "tor": {
+      "address": "0x700dA3193D35fA54Cd3fBf29B66f2a2A0385659e",
+      "network": "mainnet",
+      "result": "FAILED, environment",
+      "detail": "The worker really does boot an Arti Tor client in WASM. The demo gateway 152.236.3.22:12298 is gone ('all gateways failed for /bootstrap.zip.zst'), and without it the client cannot build circuits: 'Reached circuit build retry limit' on three consecutive consensus attempts over 150 seconds. The docs already warn the gateway is demonstration-only and may disappear.",
+      "whatItWouldTake": "Run your own Tor gateway and pass it in config.gateways."
+    },
+    "nym": { "address": "0x3aCD9742C68F6d993066Ae25533e09b9e1f60eD0", "result": "not tested" },
+    "sphinxSepolia": { "address": "0x35133267A8F7EC35046a83DCA0f4Ca8A6e1b7A9A", "result": "not tested" }
+  },
+  "findings": [
+    "Both target RPCs answered a fetch made from the harness's null-origin document, so CORS from Origin: null is not a blocker for either Arkiv or the devnet gateway. That was the thing most likely to kill this.",
+    "The specifier contract is read through the host's own rpcProvider, and that read is NOT anonymized. For the design this means the app still reveals to a mainnet RPC that it is starting an anon-rpc session.",
+    "Routing adds roughly 0.6 to 2 seconds per call over the passthrough network, before any real mixnet latency."
+  ],
+  "verdict": "The API works and is usable. Anonymity itself is unproven here: the only anonymizing network reachable from a plain laptop needs a gateway you host."
+}
