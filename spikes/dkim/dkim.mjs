@@ -74,14 +74,30 @@ out.results = (res.results ?? []).map((r) => ({
 out.dkimPass = out.results.some((r) => r.status === 'pass')
 
 // --- lift the P-256 key out of the body and check a signature made with it
-const body = eml.toString('utf8')
-const found = body.match(/pinesign-key:\s*(0x[0-9a-fA-F]{130})/)
-out.publicKeyInBody = !!found
-if (found) {
-  const extracted = Uint8Array.from(Buffer.from(found[1].slice(2), 'hex'))
+//
+// A real provider does not hand us the body as we typed it: Gmail sends it quoted-printable with
+// soft line breaks every 76 columns, or base64 for the HTML alternative, either of which cuts a
+// 130-character hex string in half. So search the raw bytes, the same bytes with soft breaks
+// removed, and every base64 part decoded, and take the first candidate that yields a key.
+const candidates = [eml.toString('utf8')]
+candidates.push(candidates[0].replace(/=\r?\n/g, ''))
+for (const blob of candidates[0].match(/(?:[A-Za-z0-9+/]{60,}\r?\n)+[A-Za-z0-9+/]*={0,2}/g) || []) {
+  try { candidates.push(Buffer.from(blob.replace(/\s/g, ''), 'base64').toString('utf8')) } catch {}
+}
+const hunt = (re) => { for (const c of candidates) { const m = c.match(re); if (m) return m[1] } return null }
+
+const foundKey = hunt(/pinesign-key:\s*(0x[0-9a-fA-F]{130})/)
+out.publicKeyInBody = !!foundKey
+if (foundKey) {
+  const extracted = Uint8Array.from(Buffer.from(foundKey.slice(2), 'hex'))
   out.extractedKeyBytes = extracted.length
-  out.extractedKeyMatches = Buffer.from(extracted).equals(Buffer.from(pub))
-  out.p256SignatureVerifiesWithExtractedKey = p256.verify(sigOverChallenge, challenge, extracted)
+  // In real mode the keypair in this file is not the one in the email, so the signature has to
+  // travel with the key. Fall back to the locally made one only for the self-signed path.
+  const foundSig = hunt(/pinesign-sig:\s*(0x[0-9a-fA-F]{128})/)
+  out.signatureInBody = !!foundSig
+  out.extractedKeyMatches = foundSig ? undefined : Buffer.from(extracted).equals(Buffer.from(pub))
+  const sig = foundSig ? Uint8Array.from(Buffer.from(foundSig.slice(2), 'hex')) : sigOverChallenge
+  out.p256SignatureVerifiesWithExtractedKey = p256.verify(sig, challenge, extracted)
 }
 
 out.PASS = out.dkimPass === true && out.publicKeyInBody === true && out.p256SignatureVerifiesWithExtractedKey === true
