@@ -17,6 +17,7 @@ import * as chain from './chain.js'
 import * as admin from './admin.js'
 import { rateLimit, requireHexParam, isHex } from './limits.js'
 import * as invites from './invites.js'
+import * as arkiv from './arkiv.js'
 import * as mail from './mail.js'
 import * as ens from './ens.js'
 import * as otp from './otp.js'
@@ -477,6 +478,61 @@ app.get('/api/invite/:id', requireHexParam('id', { length: 24 }), async (req, re
 /** Sender's list, so the page can show who has accepted. */
 app.post('/api/invites', requireSignature, async (req, res) => {
   res.json(await invites.bySender(req.pubKey))
+})
+
+// ---- arkiv ----
+//
+// The browser cannot talk to Rabdi directly: the endpoint wants an access key
+// in the URL, and a key in a bundle is a key everyone has. So these routes are
+// a proxy and nothing more. They do not decide anything — every payload that
+// passes through is signed by a passkey the gateway does not hold, and
+// arkiv.js refuses one whose signature does not cover the row it arrived in.
+
+// A browser naturally produces 0x-prefixed hex and the gateway's own validator
+// does not accept the prefix, so take either form here and let arkiv.js settle
+// on one. Only the bodies: a path parameter stays bare, being a URL.
+const hexish = (value) => isHex(String(value ?? '').replace(/^0x/, ''))
+
+app.get('/api/arkiv/status', async (_req, res) => {
+  res.json(await arkiv.status())
+})
+
+/**
+ * Alice publishes her invite. No file has been uploaded at this point: the
+ * fingerprint commits her to one without revealing which, and the email hash
+ * is salted so the row says nothing about who it is for.
+ */
+app.post('/api/arkiv/invite', limitSend, async (req, res) => {
+  if (!arkiv.configured()) return res.status(503).json({ error: 'arkiv is not configured on this server' })
+  const { fingerprint, emailHash: hash, payload } = req.body ?? {}
+  if (!hexish(fingerprint) || !hexish(hash) || !hexish(payload)) {
+    return res.status(400).json({ error: 'fingerprint, emailHash and payload must be hex' })
+  }
+  try {
+    res.json(await arkiv.createInvite({ fingerprint, emailHash: hash, payload: fromHex(payload) }))
+  } catch (error) {
+    res.status(400).json({ error: tidy(error) })
+  }
+})
+
+/** Bob's page, asking what is waiting for him. */
+app.get('/api/arkiv/invites/:emailHash', requireHexParam('emailHash', { length: 64 }), async (req, res) => {
+  if (!arkiv.configured()) return res.status(503).json({ error: 'arkiv is not configured on this server' })
+  try {
+    res.json(await arkiv.invitesForEmail(req.params.emailHash))
+  } catch (error) {
+    res.status(502).json({ error: tidy(error) })
+  }
+})
+
+/** Alice's page, polling for an accept so she knows when to upload. */
+app.get('/api/arkiv/accepts/:fingerprint', requireHexParam('fingerprint', { length: 16 }), async (req, res) => {
+  if (!arkiv.configured()) return res.status(503).json({ error: 'arkiv is not configured on this server' })
+  try {
+    res.json(await arkiv.acceptsForFile(req.params.fingerprint))
+  } catch (error) {
+    res.status(502).json({ error: tidy(error) })
+  }
 })
 
 // ---- names ----

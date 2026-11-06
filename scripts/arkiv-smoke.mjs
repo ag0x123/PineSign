@@ -40,8 +40,28 @@ function party(kind) {
   return { payload: encode({ kind, encPublicKey, signPublicKey, signature }), encPublicKey }
 }
 
+// With --http the write goes through the gateway's own route instead of this
+// process, which is the only way to catch the two sides disagreeing about
+// whether the indexed fields carry an 0x prefix.
+const VIA = process.argv.includes('--http') ? (process.env.PINESIGN_ORIGIN ?? 'http://localhost:8788') : null
+out.via = VIA ?? 'in process'
+const bare = (v) => v.replace(/^0x/, '')
+
+async function post(path, body) {
+  const r = await fetch(VIA + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = await r.json()
+  if (!r.ok) throw new Error(`${path} ${r.status}: ${json.error}`)
+  return json
+}
+
 const alice = party(KIND.INVITE)
-out.invite = await arkiv.createInvite({ fingerprint, emailHash, payload: alice.payload })
+out.invite = VIA
+  ? await post('/api/arkiv/invite', { fingerprint: bare(fingerprint), emailHash: bare(emailHash), payload: hex(alice.payload) })
+  : await arkiv.createInvite({ fingerprint, emailHash, payload: alice.payload })
 out.invitesByEmail = (await arkiv.invitesForEmail(emailHash)).length
 out.invitesByFile = (await arkiv.invitesForFile(fingerprint)).length
 

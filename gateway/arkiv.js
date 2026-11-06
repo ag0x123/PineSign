@@ -78,6 +78,15 @@ export function writerAddress() {
  */
 const unwrap = (v) => (v && typeof v === 'object' && 'value' in v ? v.value : v)
 
+/**
+ * The indexed fields are stored 0x-prefixed, and the signature covers that
+ * exact string — so a query for the bare form would find nothing and a payload
+ * signed over the bare form would not verify. The HTTP API speaks bare hex
+ * because that is what the gateway's own hex validator accepts, so both forms
+ * meet here and nowhere else.
+ */
+const prefixed = (value) => (String(value).startsWith('0x') ? String(value) : '0x' + value)
+
 function bytesFrom(value) {
   const hex = String(unwrap(value))
   return Uint8Array.from(Buffer.from(hex.startsWith('0x') ? hex.slice(2) : hex, 'hex'))
@@ -118,6 +127,8 @@ const SELECT = { $key: true, $expiresAt: true, fingerprint: true, emailHash: tru
 async function create(schema, { fingerprint, emailHash, payload, kind, days }) {
   const c = client()
   if (c === false) throw new Error('arkiv not configured')
+  fingerprint = prefixed(fingerprint)
+  emailHash = prefixed(emailHash)
   if (!verify(payload, { fingerprint, emailHash })) throw new Error('payload signature does not cover this row')
   const started = Date.now()
   const created = await c.write.createEntity(
@@ -140,7 +151,7 @@ async function query(schema, kind, field, value) {
   const c = client()
   if (c === false) throw new Error('arkiv not configured')
   // fetch() answers with { entities }, not the array itself.
-  const { entities } = await c.read.select(SELECT).from(schema).where(eq(field, value)).fetch()
+  const { entities } = await c.read.select(SELECT).from(schema).where(eq(field, prefixed(value))).fetch()
   return hydrate(entities, kind)
 }
 
