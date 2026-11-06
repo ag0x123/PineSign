@@ -1,0 +1,18 @@
+{
+  "spike": "4-passkey-prf",
+  "PASS": true,
+  "how": "Playwright driving the locally installed Google Chrome 150 with a CDP virtual authenticator (ctap2_1, internal transport, resident key, UV on)",
+  "prfSupportedAtCreate": true,
+  "prfResultsPresent": true,
+  "prfBytes": 32,
+  "prfStableAcrossAssertions": true,
+  "derived": { "x25519Bytes": 32, "secp256k1Bytes": 32, "via": "HKDF-SHA256, salt pinesign/v1, info x25519 / secp256k1" },
+  "p256AssertionVerifies": true,
+  "signatureBytesDer": 70,
+  "gotchas": [
+    "Playwright 1.56 refuses to download its bundled chromium on macOS 12 ('Playwright does not support chromium on mac12'). Launching with channel: 'chrome' against the installed Google Chrome works and needs no download.",
+    "@noble/curves 2.x verify() HASHES the message itself, so a WebAuthn assertion must be verified against the raw authenticatorData || sha256(clientDataJSON), not against its SHA-256. Passing the digest fails silently as a bad signature. The workshop's copy of @noble/curves is 1.x and takes the digest instead, so the two spikes are not interchangeable.",
+    "Assertion signatures come back high-s about half the time (observed both ways across runs) and nothing in WebAuthn normalises s. noble's verify defaults to lowS: true and rejects those, so a verifier must pass lowS: false. The EIP-7951 precompile accepts both, which is why the on-chain side is unaffected."
+  ],
+  "CAVEAT": "A virtual authenticator proves the API shape and that PRF output is stable across assertions on one authenticator. It cannot prove that real hardware gives the same PRF bytes on a second physical device: that stays a manual two-device tap, which is docs/TESTING.md section 3 in PineSign and the one check that could still invalidate the design."
+}
