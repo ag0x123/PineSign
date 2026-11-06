@@ -1,0 +1,2 @@
+{ "name": "spike-dkim", "private": true, "type": "module",
+  "dependencies": { "mailauth": "^4.8.4", "@noble/curves": "^2.4.0", "@noble/hashes": "^2.0.0" } }

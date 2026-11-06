@@ -1,0 +1,22 @@
+{
+  "spike": "3-dkim-local",
+  "PASS": true,
+  "mode": "self-signed .eml with an injected DNS resolver",
+  "library": "mailauth 4.8.4 (dkimSign + dkimVerify)",
+  "emlBytes": 994,
+  "verifyMs": 22,
+  "signingDomain": "pinesign.xyz",
+  "selector": "mumbai",
+  "algo": "rsa-sha256",
+  "status": "pass",
+  "bodyHashMatches": true,
+  "publicKeyFromBody": {
+    "found": true,
+    "bytes": 65,
+    "form": "uncompressed P-256 point, carried as a pinesign-key: 0x… line in the body",
+    "matchesTheKeyThatSigned": true,
+    "p256SignatureVerifiesWithIt": true
+  },
+  "CAVEAT": "No sample.eml was provided, so this ran against a message the spike signed itself. It proves the verifier, the relaxed/relaxed canonicalisation, the body hash and the key extraction. It does NOT prove a real provider's signature or real DNS lookup. Drop a real .eml at spikes/dkim/sample.eml and rerun; the script switches to real DNS automatically.",
+  "relatedResult": "Spike 5d already verifies an RSA-2048 DKIM signature on chain inside an EIP-8141 VERIFY frame for 61,330 gas, so the on-chain half of this path is proven independently of the .eml."
+}
