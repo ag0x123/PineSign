@@ -10,7 +10,9 @@
  * money somewhere it does nothing.
  */
 
-export const BEE_URL = process.env.BEE_URL ?? 'http://localhost:1633'
+// An empty BEE_URL is a half-filled .env, not a choice — ?? would keep the
+// empty string and every request would be made against a relative path.
+export const BEE_URL = process.env.BEE_URL || 'http://localhost:1633'
 
 async function call(path, { method = 'GET', timeout = 8000 } = {}) {
   const res = await fetch(BEE_URL + path, { method, signal: AbortSignal.timeout(timeout) })
