@@ -1,0 +1,16 @@
+{
+  "spike": "2-swarm",
+  "PASS": true,
+  "endpoint": "http://localhost:1633 (Hetzner pinesign-bee-1, bee 2.8.2)",
+  "batch": "028c83a31edc814dd785bd77655b9e6f4b27bf809c6be3698d7a94c598d0c9e3",
+  "batchDepth": 17,
+  "plainBytes": 65536,
+  "uploadBytes": 65564,
+  "uploadMs": 37,
+  "downloadMs": 7,
+  "bmtMs": 53,
+  "roundTripIdentical": true,
+  "decrypted": true,
+  "referencesMatch": true,
+  "gotcha": "bee-js uploadData defaults to redundancy level 1; redundancyLevel:0 is dropped as falsy. Root chunk sizes by level: 0=72, 1=168, 2=232, 3=264, 4=808 bytes for an 8KB file. Only level 0 yields a plain BMT root that bmt-js can reproduce."
+}

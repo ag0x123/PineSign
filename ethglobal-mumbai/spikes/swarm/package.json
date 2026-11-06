@@ -1,0 +1,9 @@
+{
+  "name": "spike-swarm",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ethersphere/bee-js": "^8.3.1",
+    "@fairdatasociety/bmt-js": "^2.1.0"
+  }
+}
