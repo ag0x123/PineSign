@@ -22,3 +22,9 @@ demo.mp4
 
 # Keys, and anything else uploaded to a deployment by hand
 .local/
+
+# Mumbai spikes: upstream clones and sample emails
+*.eml
+out/
+spikes/frame/workshop/
+spikes/frame/sidecar/

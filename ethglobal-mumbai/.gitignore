@@ -1,6 +1,0 @@
-.env
-node_modules/
-*.eml
-out/
-spikes/frame/workshop/
-spikes/frame/sidecar/
