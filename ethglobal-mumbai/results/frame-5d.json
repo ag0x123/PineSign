@@ -1,0 +1,24 @@
+{
+  "spike": "5d-dkim-rsa2048-in-verify-frame",
+  "PASS": true,
+  "modulusBits": 2048,
+  "exponent": 65537,
+  "signatureBytes": 256,
+  "signedHeaderBytes": 227,
+  "wallet": "0xc0cb6fa73fc964dfd0a260e32c390b506f04c830",
+  "verifyStandalone": { "validSignature": true, "tamperedSignature": false },
+  "gasRsaVerifyStandalone": 63661,
+  "gasVerifyFrame": 61330,
+  "gasTotalTx": 536637,
+  "block": 5197,
+  "MAX_VERIFY_GAS": 100000,
+  "answerToTheQuestionAsked": "The question was whether the public mempool rejects an RSA-2048 DKIM frame while the alt mempool admits it. It does not: at 61,330 gas the check fits inside the 100,000 validation-prefix cap, so the canonical public mempool accepts it and mines it. No alt mempool, no staking, is needed for DKIM.",
+  "optimisation": {
+    "before": 246505,
+    "after": 63661,
+    "why": "The first version compared EM byte by byte. Indexing bytes memory bounds-checks every access, and indexing a bytes constant copies the whole constant on each access, so 253 comparisons cost about 180k gas. Checking EM as eight 32-byte words instead costs almost nothing. The MODEXP precompile itself is only 5,461 gas by EIP-2565 (multiplication_complexity 1024, iteration_count 16)."
+  },
+  "notable": "This transaction carried signatures: [] - no signature entries at all. Authorisation came only from the DKIM signature checked inside the VERIFY frame.",
+  "negativeTest": "One bit flipped at byte 200 of the signature: rejected before inclusion, 'validation prefix frame reverted'. The same tampered signature returns false from the standalone verify() view.",
+  "altMempool": "Accepted the tx and then never included it, the same defect seen in 5a."
+}

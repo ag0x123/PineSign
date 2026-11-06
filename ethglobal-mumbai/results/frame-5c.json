@@ -1,0 +1,18 @@
+{
+  "spike": "5c-sponsored-gas",
+  "PASS": true,
+  "wallet": "0x59a682f6b08eefed54766ef041c181a97c6332d9",
+  "paymaster": "0xe168d173858dac7e4f2e13e30234763a5d63b33a",
+  "txHash": "0x1bac54a2bebf025b4c52abb84092cfccac15116315586cfaaa4ac3d40b412ae0",
+  "block": 5165,
+  "walletBalanceBefore": "0",
+  "walletBalanceAfter": "0",
+  "paymasterPaidWei": "1004242000000000",
+  "frames": 3,
+  "gasTotal": 502121,
+  "gasWalletVerify": 30902,
+  "gasPaymasterVerify": 7093,
+  "gasSenderFrame": 56173,
+  "note": "The sender is the P-256 passkey wallet from 5b, created with value 0. It never held ETH on either side of the transaction, and the paymaster's balance fell by the fee.",
+  "gotcha": "A wallet that hardcodes approve(EXECUTION_AND_PAYMENT) cannot be sponsored: its VERIFY frame is only allowed EXECUTION when a paymaster covers payment, and approving more than the frame allows reverts the whole validation prefix. The wallet now reads FrameParam.ALLOWED_SCOPE for the current frame and approves exactly that, which works in both modes."
+}

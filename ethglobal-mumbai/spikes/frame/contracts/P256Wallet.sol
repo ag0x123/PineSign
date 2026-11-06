@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {HegotaSupport} from "@forshtat/hegota-support/contracts/HegotaSupport.sol";
 import {Devnet} from "@forshtat/hegota-support/contracts/Devnet.sol";
-import {Scope, TxParam} from "@forshtat/hegota-support/contracts/Params.sol";
+import {Scope, TxParam, FrameParam} from "@forshtat/hegota-support/contracts/Params.sol";
 
 /// Spike 5b: an EIP-8141 account whose only owner is a P-256 (passkey) key.
 ///
@@ -37,6 +37,10 @@ contract P256Wallet is HegotaSupport(Devnet.ERC8421_WORKSHOP) {
         bytes32 digest = bytes32(txparam(TxParam.SIG_HASH));
         (bool ok, bytes memory ret) = P256_VERIFY.staticcall(abi.encodePacked(digest, rs, qx, qy));
         require(ok && ret.length == 32 && uint256(bytes32(ret)) == 1, "bad p256 signature");
-        approve(Scope.EXECUTION_AND_PAYMENT);
+        // Approve exactly what this frame is allowed to approve, so the same wallet works both when it
+        // pays for itself (EXECUTION_AND_PAYMENT) and when a paymaster pays (EXECUTION only). Approving
+        // more than the frame allows reverts the validation prefix.
+        uint256 index = txparam(TxParam.CURRENT_FRAME_INDEX);
+        approve(Scope(frameparam(index, FrameParam.ALLOWED_SCOPE)));
     }
 }
