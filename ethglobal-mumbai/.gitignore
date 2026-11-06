@@ -2,5 +2,5 @@
 node_modules/
 *.eml
 out/
-ethglobal-mumbai/spikes/frame/workshop/
-ethglobal-mumbai/spikes/frame/sidecar/
+spikes/frame/workshop/
+spikes/frame/sidecar/
