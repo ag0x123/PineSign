@@ -3,7 +3,14 @@ src = "src"
 test = "test"
 out = "out"
 libs = ["lib"]
-solc_version = "0.8.24"
+# The EIP-8141 helpers ship as an npm package, contracts and all, so the frame
+# contracts build from the same dependency the transaction builder uses rather
+# than from a clone of the workshop that nothing in this repo tracks.
+remappings = ["@forshtat/hegota-support/=../node_modules/@forshtat/hegota-support/"]
+allow_paths = ["../node_modules"]
+# The EIP-8141 helpers pin =0.8.28, and one solc version has to serve the whole
+# tree. The v0.2 contracts ask for ^0.8.24 and build unchanged under it.
+solc_version = "0.8.28"
 # The delivery struct has more fields than the legacy pipeline can keep on the
 # stack. via-ir handles it, and the optimizer is wanted anyway for a contract
 # whose whole cost argument is per-delivery gas.
