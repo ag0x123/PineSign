@@ -30,8 +30,11 @@ if (!frame.RPC || !frame.RELEASE_ADDRESS) {
 const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
 const modulus = publicKey.export({ format: 'jwk' }).n
 const modulusBytes = Buffer.from(modulus, 'base64url')
+// A unique message per run: the accept hash is the hash of these bytes, and a
+// release can only happen once per accept hash. Reusing them would read back
+// the previous run's row and look like the key had not survived.
 const signedHeaders = Buffer.from(
-  'dkim-signature:v=1; a=rsa-sha256; d=gmail.com; s=20230601;\r\nfrom:bob@gmail.com\r\n'
+  `dkim-signature:v=1; a=rsa-sha256; d=gmail.com; s=20230601;\r\nfrom:bob@gmail.com\r\nmessage-id:<${crypto.randomUUID()}@mail.gmail.com>\r\n`
 )
 const signature = crypto.sign('sha256', signedHeaders, privateKey)
 out.modulusBytes = modulusBytes.length
@@ -102,6 +105,30 @@ try {
   out.tamperedOutcome = error.message.slice(0, 160)
 }
 
-out.PASS = Boolean(receipt.ok && out.keyIdentical && out.swarmRefIdentical && out.underVerifyCap && out.tamperedRefused)
+// --- and a sponsorship signed by someone else
+const forged = { ...process.env }
+try {
+  const { generatePrivateKey } = await import('viem/accounts')
+  process.env.PINESIGN_SPONSOR_KEY = generatePrivateKey()
+  // frame.js reads the key once at import, so a second copy of the module is
+  // the only way to sign with a different one.
+  const other = await import(`../gateway/frame.js?forged=${Date.now()}`)
+  const bad = await other.release({
+    account,
+    acceptHash,
+    encryptedKey,
+    swarmRef,
+    dkim: { modulus: hex(modulusBytes), signature: hex(signature), signedHeaders: hex(signedHeaders) },
+  })
+  out.forgedSponsorRefused = false
+  out.forgedOutcome = `accepted as ${bad.hash}`
+} catch (error) {
+  out.forgedSponsorRefused = true
+  out.forgedOutcome = error.message.slice(0, 120)
+} finally {
+  process.env.PINESIGN_SPONSOR_KEY = forged.PINESIGN_SPONSOR_KEY
+}
+
+out.PASS = Boolean(receipt.ok && out.forgedSponsorRefused && out.keyIdentical && out.swarmRefIdentical && out.underVerifyCap && out.tamperedRefused)
 console.log(JSON.stringify(out, null, 2))
 process.exit(out.PASS ? 0 : 1)

@@ -113,7 +113,8 @@ if (fresh || !(await alive(paymaster))) {
   // Funded through its creation value: a plain transfer runs its fallback,
   // which calls APPROVE outside a frame and fails.
   const funding = BigInt(process.env.PINESIGN_PAYMASTER_FUNDING_WEI ?? 10n ** 16n)
-  paymaster = await deploy('PineSignPaymaster', [], funding)
+  if (!frame.SPONSOR_ADDRESS) throw new Error('PINESIGN_SPONSOR_KEY is not set; the paymaster needs its signer')
+  paymaster = await deploy('PineSignPaymaster', [frame.SPONSOR_ADDRESS, BigInt(chainId)], funding)
 }
 await save({ release, paymaster })
 

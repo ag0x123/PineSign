@@ -21,6 +21,7 @@
 import * as tx from '@forshtat/hegota-support/tx'
 import { getProfile } from '@forshtat/hegota-support/profiles'
 import { encodeAbiParameters, encodeFunctionData, decodeFunctionResult, keccak256, toHex } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,14 +39,50 @@ const MAX_FEE_WEI = BigInt(process.env.FRAME_MAX_FEE_WEI ?? 2_000_000_000n)
 export const RELEASE_ADDRESS = process.env.PINESIGN_RELEASE_ADDRESS ?? null
 export const PAYMASTER_ADDRESS = process.env.PINESIGN_PAYMASTER_ADDRESS ?? null
 
-// Gas for the validation prefix. Only what the measurements need: a bigger
-// number is not safer here, it is the thing that pushes the prefix over the cap.
-const VERIFY_GAS = BigInt(process.env.FRAME_VERIFY_GAS ?? 80_000)
-const PAYMASTER_GAS = BigInt(process.env.FRAME_PAYMASTER_GAS ?? 15_000)
+// Gas for the validation prefix, which is capped at MAX_VERIFY_GAS = 100,000
+// for the whole prefix — these are budgets, and it is their sum that is
+// checked, so a generous number here is not caution but the thing that gets the
+// transaction rejected. Measured: 55,567 for the DKIM check over short headers
+// and 61,330 over real ones, 22,614 for the paymaster. 96,000 leaves room for
+// longer headers without reaching the cap.
+//
+// Too small is just as fatal and much harder to read: a frame that runs out of
+// gas reverts, and the node reports only "validation prefix frame reverted".
+// The first verifying paymaster was given 15,000 and looked like a broken
+// signature for a while.
+const VERIFY_GAS = BigInt(process.env.FRAME_VERIFY_GAS ?? 68_000)
+const PAYMASTER_GAS = BigInt(process.env.FRAME_PAYMASTER_GAS ?? 28_000)
 const EXECUTION_GAS = BigInt(process.env.FRAME_EXECUTION_GAS ?? 500_000)
 
 export function configured() {
   return Boolean(RPC && CHAIN_ID && RELEASE_ADDRESS)
+}
+
+/**
+ * The key that says "Pinesign will pay for this one".
+ *
+ * The paymaster checks a signature rather than reading a credit balance,
+ * because validation may not read another account's storage. So the free-send
+ * allowance is enforced here, by declining to sign, and the signature is what
+ * stops anyone else from spending the paymaster's funds.
+ */
+export const sponsorAccount = process.env.PINESIGN_SPONSOR_KEY
+  ? privateKeyToAccount(process.env.PINESIGN_SPONSOR_KEY)
+  : null
+
+export const SPONSOR_ADDRESS = sponsorAccount?.address ?? null
+
+async function sponsorship({ account, nonce }) {
+  if (!sponsorAccount) throw new Error('PINESIGN_SPONSOR_KEY is not set')
+  const digest = keccak256(
+    encodeAbiParameters(
+      [{ type: 'uint256' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+      [BigInt(CHAIN_ID), PAYMASTER_ADDRESS, account, nonce]
+    )
+  )
+  // Signed as a raw digest, not an EIP-191 message: the contract hashes the
+  // same four values and calls ecrecover on exactly this.
+  return sponsorAccount.sign({ hash: digest })
 }
 
 let id = 0
@@ -143,10 +180,21 @@ export async function release({ account, acceptHash, encryptedKey, swarmRef, dki
     })
   )
 
+  const nonce = await nonceOf(account)
+  if (sponsored) {
+    frames[1] = tx.frame(profile, 'VERIFY', {
+      scope: 'PAYMENT',
+      target: PAYMASTER_ADDRESS,
+      execution: PAYMASTER_GAS,
+      state: 0n,
+      data: await sponsorship({ account, nonce }),
+    })
+  }
+
   const built = tx.newTx({
     chainId: CHAIN_ID,
     sender: account,
-    nonceSeq: await nonceOf(account),
+    nonceSeq: nonce,
     frames,
     signatures: [],
     fees: { maxFeePerGas: MAX_FEE_WEI },
