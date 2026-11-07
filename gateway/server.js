@@ -18,6 +18,7 @@ import * as admin from './admin.js'
 import { rateLimit, requireHexParam, isHex } from './limits.js'
 import * as invites from './invites.js'
 import * as arkiv from './arkiv.js'
+import * as inbound from './inbound.js'
 import * as mail from './mail.js'
 import * as ens from './ens.js'
 import * as otp from './otp.js'
@@ -108,6 +109,72 @@ app.use(async (req, res, next) => {
   }
 })
 
+// Anything that spends postage, mail or gas is limited; reads are not. The
+// numbers are per minute and per client, and overridable because what is
+// generous for one deployment is a wall for another.
+const perMinute = (name, fallback) => Number(process.env[name] ?? fallback)
+
+const limitAuth = rateLimit({ key: 'auth', windowMs: 60_000, max: perMinute('RATE_AUTH_PER_MIN', 20) })
+const limitSend = rateLimit({ key: 'send', windowMs: 60_000, max: perMinute('RATE_SEND_PER_MIN', 10) })
+const limitSetup = rateLimit({ key: 'setup', windowMs: 60_000, max: perMinute('RATE_SETUP_PER_MIN', 60) })
+const limitCode = rateLimit({ key: 'code', windowMs: 60_000, max: perMinute('RATE_CODE_PER_MIN', 10) })
+const limitInbound = rateLimit({ key: 'inbound', windowMs: 60_000, max: perMinute('RATE_INBOUND_PER_MIN', 120) })
+
+/**
+ * Bob's reply arrives here.
+ *
+ * Mounted before the JSON parser and taking the body as raw bytes, because a
+ * webhook signature covers the bytes that were sent and not a re-serialisation
+ * of the object they parsed into. A message is also perfectly allowed to be
+ * posted as message/rfc822, which the JSON parser would reject outright.
+ */
+app.post(
+  '/api/inbound/resend',
+  limitInbound,
+  express.raw({ type: '*/*', limit: '30mb' }),
+  async (req, res) => {
+    const text = req.body?.toString('utf8') ?? ''
+    const signature = inbound.verifySignature({
+      secret: process.env.RESEND_WEBHOOK_SECRET,
+      id: req.get('svix-id'),
+      timestamp: req.get('svix-timestamp'),
+      signature: req.get('svix-signature'),
+      body: text,
+    })
+    if (signature.checked && !signature.valid) {
+      console.log(`  inbound rejected: ${signature.reason ?? 'bad webhook signature'}`)
+      return res.status(401).json({ error: 'bad webhook signature' })
+    }
+
+    let parsed = null
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      // Not JSON: then it is the message itself.
+    }
+    const raw = inbound.rawFrom(parsed ?? req.body, req.get('content-type') ?? '')
+    if (!raw) {
+      // Answer 200 anyway. A provider that gets a 5xx retries forever, and a
+      // payload we cannot read will not read any better the ninth time.
+      console.log(`  inbound ${text.length}b with no message in it; keys: ${Object.keys(parsed ?? {}).join(',') || 'none'}`)
+      return res.json({ stored: false, reason: 'no raw message in the payload', signatureChecked: signature.checked })
+    }
+
+    try {
+      const record = await inbound.accept(raw)
+      res.json({ stored: true, id: record.id, dkim: record.dkim, fromDomain: record.fromDomain, signatureChecked: signature.checked })
+    } catch (error) {
+      console.log(`  inbound failed: ${tidy(error)}`)
+      res.status(200).json({ stored: false, error: tidy(error) })
+    }
+  }
+)
+
+/** What has arrived, with no addresses in it. For the admin panel and for us. */
+app.get('/api/inbound/recent', setup.requireSetupToken, (_req, res) => {
+  res.json({ dir: '.storage/inbound', arrivals: inbound.recentArrivals() })
+})
+
 app.use(express.json({ limit: '64mb' }))
 
 app.use((req, res, next) => {
@@ -129,16 +196,6 @@ app.use((req, res, next) => {
   res.set('Referrer-Policy', 'no-referrer')
   next()
 })
-
-// Anything that spends postage, mail or gas is limited; reads are not. The
-// numbers are per minute and per client, and overridable because what is
-// generous for one deployment is a wall for another.
-const perMinute = (name, fallback) => Number(process.env[name] ?? fallback)
-
-const limitAuth = rateLimit({ key: 'auth', windowMs: 60_000, max: perMinute('RATE_AUTH_PER_MIN', 20) })
-const limitSend = rateLimit({ key: 'send', windowMs: 60_000, max: perMinute('RATE_SEND_PER_MIN', 10) })
-const limitSetup = rateLimit({ key: 'setup', windowMs: 60_000, max: perMinute('RATE_SETUP_PER_MIN', 60) })
-const limitCode = rateLimit({ key: 'code', windowMs: 60_000, max: perMinute('RATE_CODE_PER_MIN', 10) })
 
 // ---- admin sign-in ----
 

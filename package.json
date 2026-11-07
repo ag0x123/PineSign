@@ -26,6 +26,7 @@
     "@noble/curves": "^1.6.0",
     "@noble/hashes": "^1.5.0",
     "express": "^4.21.0",
+    "mailauth": "^8.0.4",
     "viem": "^2.56.3"
   },
   "devDependencies": {
