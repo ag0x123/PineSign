@@ -5,7 +5,7 @@ import {HegotaSupport} from "@forshtat/hegota-support/contracts/HegotaSupport.so
 import {Devnet} from "@forshtat/hegota-support/contracts/Devnet.sol";
 import {Scope, TxParam, FrameParam} from "@forshtat/hegota-support/contracts/Params.sol";
 
-/// Spike 5d: a VERIFY frame that checks a real RSA-2048 DKIM signature.
+/// The account a delivery is sent from: authorised by Bob's email reply and nothing else.
 ///
 /// The frame's `data` carries the DKIM public modulus, the 256-byte signature, and the signed header bytes.
 /// Unlike a transaction signature this is not circular: a DKIM signature covers the email, not the frame, so
@@ -22,8 +22,12 @@ contract DkimWallet is HegotaSupport(Devnet.ERC8421_WORKSHOP) {
 
     bytes32 public immutable modulusHash;
 
-    constructor(bytes32 modulusHash_) payable {
+    /// The only contract this account will approve a release to.
+    address public immutable releaseTarget;
+
+    constructor(bytes32 modulusHash_, address releaseTarget_) payable {
         modulusHash = modulusHash_;
+        releaseTarget = releaseTarget_;
     }
 
     fallback() external payable {
@@ -34,6 +38,25 @@ contract DkimWallet is HegotaSupport(Devnet.ERC8421_WORKSHOP) {
 
         require(keccak256(modulus) == modulusHash, "wrong dkim key");
         require(verify(modulus, signature, sha256(signedHeaders)), "bad dkim signature");
+
+        // A valid signature over *some* email is not authority to release *any* delivery. The
+        // frame after this one is the release, and the accept hash it writes has to be the hash of
+        // the headers this signature covers — otherwise the same reply would authorise every file
+        // we hold. The target is pinned too, so the approval cannot be spent on another contract.
+        // Not simply the next frame: when Pinesign sponsors the gas a paymaster
+        // frame sits in between. Find the frame aimed at the release contract,
+        // and insist there is exactly one of them.
+        bytes32 expected = keccak256(signedHeaders);
+        uint256 frames = txparam(TxParam.FRAME_COUNT);
+        uint256 releases = 0;
+        for (uint256 i = 0; i < frames; i++) {
+            if (i == index) continue;
+            if (address(uint160(frameparam(i, FrameParam.RESOLVED_TARGET))) != releaseTarget) continue;
+            releases++;
+            // release(bytes32 acceptHash, ...): four bytes of selector, then the hash.
+            require(bytes32(framedatacopy(4, 32, i)) == expected, "pinesign: accept hash mismatch");
+        }
+        require(releases == 1, "pinesign: one release per transaction");
 
         approve(Scope(frameparam(index, FrameParam.ALLOWED_SCOPE)));
     }
