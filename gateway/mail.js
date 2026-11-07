@@ -69,6 +69,30 @@ export function invitation({ to, fromName, link }) {
   })
 }
 
+/**
+ * v0.3: a nudge, not the invitation.
+ *
+ * The invitation is the link Alice shares herself, because the salt in it is
+ * what keeps the Arkiv row from naming the recipient — mailing the link would
+ * hand that to us and to the mail provider. So this says only that something is
+ * waiting, and the sender does the rest.
+ */
+export function inviteNotice({ to, origin }) {
+  return send({
+    to,
+    subject: 'Someone is sending you a file through Pinesign',
+    text: [
+      'Someone wants to send you a file through Pinesign.',
+      '',
+      'They will send you a link themselves. Open it, and you will be asked to reply to',
+      'this address — your reply is what authorises the delivery, and your mail provider',
+      "signs it, so nobody can accept on your behalf. We never see the file.",
+      '',
+      `What Pinesign is: ${origin}`,
+    ].join('\n'),
+  })
+}
+
 export function accepted({ to, recipientName, link }) {
   return send({
     to,

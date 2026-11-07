@@ -19,6 +19,7 @@ import { rateLimit, requireHexParam, isHex } from './limits.js'
 import * as invites from './invites.js'
 import * as arkiv from './arkiv.js'
 import * as inbound from './inbound.js'
+import * as v3 from './v3.js'
 import * as mail from './mail.js'
 import * as ens from './ens.js'
 import * as otp from './otp.js'
@@ -587,6 +588,115 @@ app.get('/api/arkiv/accepts/:fingerprint', requireHexParam('fingerprint', { leng
   if (!arkiv.configured()) return res.status(503).json({ error: 'arkiv is not configured on this server' })
   try {
     res.json(await arkiv.acceptsForFile(req.params.fingerprint))
+  } catch (error) {
+    res.status(502).json({ error: tidy(error) })
+  }
+})
+
+// ---- v0.3 ----
+//
+// Everything the v0.3 pages call. The client library in shared/v3.js is the only
+// thing that builds these URLs, so a page never does, and scripts/v3-e2e.mjs
+// drives the same routes the UI will.
+
+/** Every service the UI shows a badge for. */
+app.get('/api/v3/status', async (_req, res) => {
+  try {
+    res.json(await v3.status())
+  } catch (error) {
+    res.status(500).json({ error: tidy(error) })
+  }
+})
+
+/**
+ * Alice invites Bob. Nothing is uploaded: the fingerprint is the commitment,
+ * and the mail we send is a notification, not the invitation itself — the link
+ * carrying the salt is hers to share.
+ */
+app.post('/api/v3/invite', limitSend, async (req, res) => {
+  const { transferId, fingerprint, emailHash: hash, payload, email, senderKey, fileName } = req.body ?? {}
+  if (!isHex(transferId, 24) || !hexish(fingerprint) || !hexish(hash) || !hexish(payload)) {
+    return res.status(400).json({ error: 'transferId, fingerprint, emailHash and payload must be hex' })
+  }
+  if (senderKey && (await v3.sendsBy(senderKey)) >= v3.FREE_SENDS) {
+    return res.status(402).json({ error: `this account has used its ${v3.FREE_SENDS} free sends` })
+  }
+  try {
+    const written = await v3.invite({ transferId, fingerprint, emailHash: hash, payload, senderKey, fileName })
+    let notified = false
+    if (email) {
+      try {
+        await mail.inviteNotice({ to: email, origin: publicOrigin(req) })
+        notified = true
+      } catch (error) {
+        // A delivery is not blocked by a mail that did not go out: Alice can
+        // always hand Bob the link herself, which is the design anyway.
+        console.log(`  invite notice failed: ${tidy(error)}`)
+      }
+    }
+    res.json({ ...written, notified })
+  } catch (error) {
+    res.status(400).json({ error: tidy(error) })
+  }
+})
+
+/** Bob's page, asking what is waiting for the address he just hashed. */
+app.get('/api/v3/invites/:emailHash', requireHexParam('emailHash', { length: 64 }), async (req, res) => {
+  try {
+    res.json(await arkiv.invitesForEmail(req.params.emailHash))
+  } catch (error) {
+    res.status(502).json({ error: tidy(error) })
+  }
+})
+
+/** Alice's page, waiting for Bob. */
+app.get('/api/v3/accepts/:fingerprint', requireHexParam('fingerprint', { length: 16 }), async (req, res) => {
+  try {
+    res.json(await arkiv.acceptsForFile(req.params.fingerprint))
+  } catch (error) {
+    res.status(502).json({ error: tidy(error) })
+  }
+})
+
+/** The ciphertext. Already encrypted on Alice's machine; this only pays postage. */
+app.post('/api/v3/upload', limitSend, async (req, res) => {
+  const { transferId, ciphertext } = req.body ?? {}
+  if (!isHex(transferId, 24) || !hexish(ciphertext)) {
+    return res.status(400).json({ error: 'transferId and ciphertext must be hex' })
+  }
+  try {
+    res.json(await v3.upload({ transferId, ciphertext }))
+  } catch (error) {
+    res.status(502).json({ error: tidy(error) })
+  }
+})
+
+/** The one transaction that gives Bob anything. */
+app.post('/api/v3/release', limitSend, async (req, res) => {
+  const { transferId, fingerprint, sealedKey, swarmRef } = req.body ?? {}
+  if (!isHex(transferId, 24) || !hexish(fingerprint) || !hexish(sealedKey) || !hexish(swarmRef)) {
+    return res.status(400).json({ error: 'transferId, fingerprint, sealedKey and swarmRef must be hex' })
+  }
+  try {
+    res.json(await v3.release({ transferId, fingerprint, sealedKey, swarmRef }))
+  } catch (error) {
+    res.status(400).json({ error: tidy(error) })
+  }
+})
+
+/** What Bob reads. Null until the transaction is in. */
+app.get('/api/v3/release/:transferId', requireHexParam('transferId', { length: 24 }), async (req, res) => {
+  try {
+    res.json(await v3.released(req.params.transferId))
+  } catch (error) {
+    res.status(502).json({ error: tidy(error) })
+  }
+})
+
+/** Swarm, proxied, so a browser with no gateway of its own can still fetch. */
+app.get('/api/v3/file/:reference', requireHexParam('reference', { length: 64 }), async (req, res) => {
+  try {
+    res.json({ ciphertext: await v3.file(req.params.reference) })
   } catch (error) {
     res.status(502).json({ error: tidy(error) })
   }

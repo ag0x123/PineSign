@@ -15,8 +15,10 @@
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { createPublicKey } from 'node:crypto'
 import { dkimVerify } from 'mailauth'
 import { storagePath } from './paths.js'
+import * as v3 from './v3.js'
 
 const DIR = storagePath('inbound')
 
@@ -68,6 +70,17 @@ function domainOf(header) {
   return match ? match[1].toLowerCase() : null
 }
 
+/**
+ * The address that replied, needed to check the salted hash in the invite.
+ *
+ * Used and not stored: the record below keeps the domain only.
+ */
+function addressOf(raw) {
+  const from = headerValue(raw, 'from') ?? ''
+  const match = from.match(/<([^>]+)>/) ?? from.match(/([^\s<>]+@[^\s<>]+)/)
+  return match ? match[1] : ''
+}
+
 function headerValue(raw, name) {
   const text = raw.toString('utf8').split(/\r?\n\r?\n/)[0]
   const line = text.split(/\r?\n(?![ \t])/).find((l) => l.toLowerCase().startsWith(name + ':'))
@@ -92,6 +105,34 @@ export async function accept(raw) {
   }))
   const pass = signatures.some((s) => s.result === 'pass')
 
+  /**
+   * Everything the frame transaction will need, taken from the signature that
+   * passed: the modulus the provider signed with, the signature itself, and the
+   * exact canonicalized header bytes it covers. The contract recomputes
+   * sha256 over those bytes, so they have to be the ones mailauth verified and
+   * not a re-canonicalisation of our own.
+   */
+  const verified = (result.results ?? []).find((s) => s.status?.result === 'pass')
+  let dkim = null
+  if (verified?.publicKey) {
+    try {
+      const { n } = createPublicKey({
+        key: Buffer.from(verified.publicKey, 'base64'),
+        format: 'der',
+        type: 'spki',
+      }).export({ format: 'jwk' })
+      dkim = {
+        signingDomain: verified.signingDomain,
+        selector: verified.selector,
+        modulus: '0x' + Buffer.from(n, 'base64url').toString('hex'),
+        signature: '0x' + Buffer.from(verified.signature, 'base64').toString('hex'),
+        signedHeaders: '0x' + Buffer.from(verified.signingHeaders.canonicalizedHeader, 'base64').toString('hex'),
+      }
+    } catch (error) {
+      dkim = { error: error.message }
+    }
+  }
+
   // Named after the message, so the same mail delivered twice is one file and a
   // sender cannot choose where it lands.
   const id = createHash('sha256').update(raw).digest('hex').slice(0, 32)
@@ -109,11 +150,28 @@ export async function accept(raw) {
     signatures,
     file,
   }
+
+  /**
+   * Does this reply belong to a transfer? Only asked once the signature has
+   * passed — an unsigned mail saying it is Bob is just a mail.
+   */
+  if (pass) {
+    try {
+      record.transfer = await v3.acceptFromReply({ text: raw.toString('utf8'), from: addressOf(raw), dkim })
+    } catch (error) {
+      record.transfer = { matched: false, reason: error.message }
+    }
+  }
   recent.unshift(record)
   recent.length = Math.min(recent.length, RECENT)
 
   // One line per arrival, no addresses in it.
-  console.log(`  inbound ${record.id} from ${record.fromDomain ?? 'unknown'} dkim=${record.dkim} ${record.bytes}b`)
+  const linked = record.transfer?.matched
+    ? `transfer=${record.transfer.transferId} accepted`
+    : record.transfer
+      ? `unlinked (${record.transfer.reason})`
+      : 'not linked'
+  console.log(`  inbound ${record.id} from ${record.fromDomain ?? 'unknown'} dkim=${record.dkim} ${record.bytes}b ${linked}`)
   return record
 }
 
