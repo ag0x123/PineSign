@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Passkey test · PineSign</title>
+  <link rel="icon" href="assets/favicon.png" />
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .prf { max-width: 44rem; }
+    .prf .card { border: 1px solid rgba(255,255,255,.14); border-radius: .75rem; padding: 1.25rem; margin: 1rem 0; }
+    .prf .row { display: flex; gap: 1rem; justify-content: space-between; align-items: baseline; padding: .35rem 0; border-bottom: 1px solid rgba(255,255,255,.07); }
+    .prf .row:last-child { border-bottom: 0; }
+    .prf .row span { opacity: .7; white-space: nowrap; }
+    .prf code { font-size: .78rem; word-break: break-all; text-align: right; }
+    .prf .buttons { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .prf #status { margin: 1rem 0; min-height: 1.4em; }
+    .prf #status.ok { color: #7bdca0; }
+    .prf #status.bad { color: #ff9b8a; }
+    .prf .hint { opacity: .7; font-size: .9rem; }
+  </style>
+</head>
+<body>
+
+<nav id="nav" class="scrolled">
+  <a class="brand" href="/"><img src="assets/pine.png" alt="" /><span>PineSign</span></a>
+  <div class="links">
+    <a href="send.html">Send</a>
+    <a href="docs.html">Docs</a>
+  </div>
+</nav>
+
+<main class="page">
+  <div class="inner prf">
+    <div class="hero">
+      <img src="assets/pine.png" alt="" />
+      <div>
+        <h1>Passkey test</h1>
+        <p class="tagline">Does one passkey derive the same keys on every device?</p>
+      </div>
+    </div>
+
+    <p>
+      PineSign derives your encryption keys from your passkey, on your device, every session. Nothing
+      is stored and nothing is sent — which only works if the same passkey gives the same answer
+      wherever you use it.
+    </p>
+    <p class="hint">
+      Create a passkey here, then open this page on another device signed in to the same password
+      manager and press <em>Use existing passkey</em>. Every key below must match, character for
+      character.
+    </p>
+
+    <div class="buttons">
+      <button id="create" class="primary">Create a passkey</button>
+      <button id="signin">Use existing passkey</button>
+    </div>
+
+    <p id="status"></p>
+
+    <div class="card" id="results" hidden>
+      <div class="row"><span>PRF output</span><code id="prf-bytes"></code></div>
+      <div class="row"><span>PRF fingerprint</span><code id="prf-fingerprint"></code></div>
+      <div class="row"><span>X25519 (encryption)</span><code id="x25519"></code></div>
+      <div class="row"><span>secp256k1 (Arkiv)</span><code id="secp256k1"></code></div>
+      <div class="row"><span>P-256 (signing)</span><code id="p256"></code></div>
+      <div class="row"><span>Credential id</span><code id="credential-id"></code></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span>Platform authenticator</span><code id="platform-authenticator">checking…</code></div>
+      <div id="environment"></div>
+    </div>
+
+    <p class="hint">
+      This page sends nothing anywhere. The PRF output stays in the tab, and only the public halves
+      of the derived keys are shown.
+    </p>
+  </div>
+</main>
+
+<script type="module" src="prf.bundle.js"></script>
+</body>
+</html>

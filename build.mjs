@@ -39,6 +39,7 @@ const targets = [
   { in: 'web/src/setup.js', out: 'web/setup.bundle.js' },
   { in: 'web/src/lander.js', out: 'web/lander.bundle.js' },
   { in: 'web/src/nav.js', out: 'web/nav.bundle.js' },
+  { in: 'web/src/prf.js', out: 'web/prf.bundle.js' },
   { in: 'signin/src/signin.js', out: 'signin/signin.bundle.js' },
 ]
 

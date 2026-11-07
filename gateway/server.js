@@ -1069,6 +1069,12 @@ app.get('/api/deliveries/all', setup.requireSetupToken, async (_req, res) => res
 
 // Bundles change on every deploy. Served with no-cache, the browser revalidates
 // each load (cheap, ETag) instead of running last week's code from its cache.
+/**
+ * The passkey test page, at a short URL because it is a thing people are asked
+ * to open on a second device by typing it.
+ */
+app.get('/prf', (_req, res) => res.sendFile(path.join(__dirname, '..', 'web', 'prf.html')))
+
 app.use(express.static(path.join(__dirname, '..', 'web'), {
   etag: true,
   setHeaders(res, filePath) {
