@@ -24,7 +24,7 @@ import * as arkiv from './arkiv.js'
 import * as frame from './frame.js'
 import * as swarm from './swarm.js'
 import { storagePath } from './paths.js'
-import { KIND, encode as encodePayload, decode as decodePayload, digest as payloadDigest } from '../shared/arkiv-payload.js'
+import { KIND, encode as encodePayload, decode as decodePayload, verify as verifyPayload } from '../shared/arkiv-payload.js'
 
 const DIR = storagePath('transfers')
 
@@ -153,18 +153,18 @@ export async function acceptFromReply({ text, from, dkim }) {
     return { matched: false, reason: 'the address that replied is not the one invited', transferId: reply.transferId }
   }
 
-  const digest = sha256(encoder.encode(`pinesign/v3/accept/${reply.transferId}/${record.fingerprint}`))
-  if (!p256.verify(bytes(reply.signature), digest, bytes(reply.signPublicKey))) {
-    return { matched: false, reason: 'the signature in the reply does not check out', transferId: reply.transferId }
-  }
-
-  // Bob's accept, signed by his key, written to Arkiv by us.
+  // Bob's accept, signed by Bob, written to Arkiv by us. The signature covers
+  // the row itself, so this gateway pays for the write and can do nothing else
+  // with it: a row it made up would not verify against the key inside it.
   const accept = encodePayload({
     kind: KIND.ACCEPT,
     encPublicKey: bytes(reply.encPublicKey),
     signPublicKey: bytes(reply.signPublicKey),
-    signature: acceptSignature({ record, reply }),
+    signature: bytes(reply.signature),
   })
+  if (!verifyPayload(accept, { fingerprint: record.fingerprint, emailHash: record.emailHash })) {
+    return { matched: false, reason: 'the signature in the reply does not cover this invite', transferId: reply.transferId }
+  }
 
   const written = await arkiv.createAccept({
     fingerprint: record.fingerprint,
@@ -182,52 +182,6 @@ export async function acceptFromReply({ text, from, dkim }) {
   return { matched: true, transferId: reply.transferId, entityKey: written.entityKey }
 }
 
-/**
- * The accept entity's own signature.
- *
- * Bob signed the transfer, not the Arkiv row, so his signature cannot be reused
- * as the row's. The row is signed by the gateway's Arkiv key instead, and says
- * so: what makes the accept trustworthy is the DKIM signature on the mail and
- * Bob's signature over the transfer, both of which are checked above and both
- * of which the gateway cannot produce.
- */
-function acceptSignature({ record, reply }) {
-  const d = payloadDigest({
-    kind: KIND.ACCEPT,
-    fingerprint: record.fingerprint,
-    emailHash: record.emailHash,
-    encPublicKey: bytes(reply.encPublicKey),
-  })
-  return p256.sign(d, gatewaySigningKey()).toCompactRawBytes()
-}
-
-let signingKey = null
-
-/**
- * A P-256 key for signing accept rows, kept beside the other server secrets.
- *
- * It is not authority over anything: an accept it signed still has to carry
- * Bob's own signature, and the release still has to carry his provider's.
- */
-function gatewaySigningKey() {
-  if (signingKey) return signingKey
-  const configured = process.env.PINESIGN_ACCEPT_KEY
-  if (configured) return (signingKey = bytes(configured))
-  // Derived from the Arkiv key so one secret is one secret, and so restarting
-  // does not invalidate rows written before it.
-  const seed = process.env.ARKIV_PRIVATE_KEY
-  if (!seed) throw new Error('set ARKIV_PRIVATE_KEY or PINESIGN_ACCEPT_KEY')
-  for (let counter = 0; counter < 256; counter++) {
-    const candidate = sha256(encoder.encode(`pinesign/v3/accept-key/${counter}/${seed}`))
-    try {
-      p256.getPublicKey(candidate, false)
-      return (signingKey = candidate)
-    } catch {
-      // out of range, try the next
-    }
-  }
-  throw new Error('could not derive an accept key')
-}
 
 // ---------- the release ----------
 

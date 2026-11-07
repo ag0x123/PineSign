@@ -187,7 +187,13 @@ export class Pinesign {
    * fingerprint is the commitment, and the file stays on her machine until Bob
    * has accepted.
    */
-  async sendInvite({ keys, file, email }) {
+  /**
+   * `email` is what gets hashed into the invite and is required. `notify` is
+   * who, if anyone, gets the nudge mail, and defaults to the same address —
+   * separate arguments because suppressing the mail must not change the hash.
+   */
+  async sendInvite({ keys, file, email, notify = email }) {
+    if (!email) throw new Error('sendInvite needs the recipient address to hash')
     const transferId = newTransferId()
     const salt = saltFor(keys, transferId)
     const bytes = file instanceof Uint8Array ? file : new Uint8Array(await file.arrayBuffer())
@@ -202,7 +208,7 @@ export class Pinesign {
         fingerprint: fingerprint.replace(/^0x/, ''),
         emailHash: emailHash.replace(/^0x/, ''),
         payload: toHex(payload),
-        email,
+        email: notify ?? null,
         fileName: file?.name ?? null,
       },
     })
@@ -282,6 +288,7 @@ export class Pinesign {
       transferId,
       salt: toHex(salt),
       fingerprint: invite.fingerprint,
+      emailHash,
       keys,
     })
     return { transferId, salt: toHex(salt), invite, reply, replyTo: 'verify@pinesign.xyz' }
@@ -327,9 +334,16 @@ export class Pinesign {
  * the inbound side already knows how to find lines like these through
  * quoted-printable and base64.
  */
-export function replyBody({ transferId, salt, fingerprint, keys }) {
-  const emailHashNote = fingerprint
-  const digest = sha256(encoder.encode(`pinesign/v3/accept/${transferId}/${emailHashNote}`))
+export function replyBody({ transferId, salt, fingerprint, emailHash, keys }) {
+  // Bob signs the Arkiv row itself, not a message about it. That way the accept
+  // entity verifies against his own key with no help from the gateway, which
+  // therefore cannot write one: the row and the signature are the same object.
+  const digest = payloadDigest({
+    kind: KIND.ACCEPT,
+    fingerprint,
+    emailHash,
+    encPublicKey: keys.enc.publicKey,
+  })
   const signature = p256.sign(digest, keys.sign.privateKey).toCompactRawBytes()
   return [
     `pinesign-transfer: ${transferId}`,
@@ -340,7 +354,3 @@ export function replyBody({ transferId, salt, fingerprint, keys }) {
   ].join('\n')
 }
 
-/** The same digest, for the gateway to check what Bob signed. */
-export function acceptDigest({ transferId, fingerprint }) {
-  return sha256(encoder.encode(`pinesign/v3/accept/${transferId}/${fingerprint}`))
-}
